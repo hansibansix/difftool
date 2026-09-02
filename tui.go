@@ -596,15 +596,16 @@ func (m *model) View() string {
 	gutW := len(fmt.Sprint(max(len(m.left), len(m.right), 1)))
 	var b strings.Builder
 
-	focus := styleBar.Render(" ")
+	hs := headerStyles(m.focused)
+	focus := hs.bar.Render(" ")
 	if m.focused {
-		focus = styleDirty.Render("▌")
+		focus = hs.text.Render("▌")
 	}
 	head := focus +
-		pathCell(displayPath(m.leftName), paneW, m.dirtyL) +
-		styleHeaderSep.Render("│") +
-		pathCell(displayPath(m.rightName), paneW, m.dirtyR)
-	b.WriteString(barPad(head, m.w) + "\n")
+		pathCell(displayPath(m.leftName), paneW, m.dirtyL, hs) +
+		hs.sep.Render("│") +
+		pathCell(displayPath(m.rightName), paneW, m.dirtyR, hs)
+	b.WriteString(barPadWith(head, m.w, hs.bar) + "\n")
 
 	curCi, curAi := -1, -1
 	if len(m.nav) > 0 {
@@ -892,7 +893,7 @@ func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, base, emph l
 
 // pathCell renders a file path with dim directory and bold basename,
 // left-truncated to fit, plus a dirty marker.
-func pathCell(p string, w int, dirty bool) string {
+func pathCell(p string, w int, dirty bool, hs hdrStyles) string {
 	avail := max(4, w-1)
 	if dirty {
 		avail -= 2
@@ -901,11 +902,11 @@ func pathCell(p string, w int, dirty bool) string {
 		p = runewidth.TruncateLeft(p, runewidth.StringWidth(p)-avail+1, "…")
 	}
 	dir, base := filepath.Split(p)
-	s := styleHeaderDim.Render(dir) + styleHeaderText.Render(base)
+	s := hs.dim.Render(dir) + hs.text.Render(base)
 	if dirty {
-		s += styleBar.Render(" ") + styleDirty.Render("*")
+		s += hs.bar.Render(" ") + hs.dirty.Render("*")
 	}
-	return s + styleBar.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(s))))
+	return s + hs.bar.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(s))))
 }
 
 // displayPath shortens the home directory to ~ for display.

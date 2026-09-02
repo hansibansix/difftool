@@ -524,13 +524,14 @@ func (d *dirModel) view() string {
 		rh = displayPath(d.rightLabel)
 	}
 	sideW := max(4, (d.w-5)/2)
-	focus := styleBar.Render(" ")
+	hs := headerStyles(d.focused)
+	focus := hs.bar.Render(" ")
 	if d.focused {
-		focus = styleDirty.Render("▌")
+		focus = hs.text.Render("▌")
 	}
-	head := focus + styleHeaderText.Render(tail(lh, sideW)) +
-		styleHeaderDim.Render(" ⇄ ") + styleHeaderText.Render(tail(rh, sideW))
-	b.WriteString(barPad(head, d.w) + "\n")
+	head := focus + hs.text.Render(tail(lh, sideW)) +
+		hs.dim.Render(" ⇄ ") + hs.text.Render(tail(rh, sideW))
+	b.WriteString(barPadWith(head, d.w, hs.bar) + "\n")
 
 	for i := d.top; i < d.top+d.bodyH(); i++ {
 		if i >= len(d.rows) {

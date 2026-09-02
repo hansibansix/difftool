@@ -142,16 +142,18 @@ var (
 	th theme
 
 	styleHeaderText, styleHeaderDim, styleHeaderSep, styleBar, styleDirty lipgloss.Style
-	styleGutter, styleSep, styleMark                                      lipgloss.Style
-	styleFooterText, styleFooterKey, styleStatus                          lipgloss.Style
-	styleDel, styleIns, styleMod, styleVoid                               lipgloss.Style
-	styleApplied, styleAppliedCur, styleAppliedMark                       lipgloss.Style
-	styleStApplied                                                        lipgloss.Style
-	styleModEmph, styleModEmphCur                                         lipgloss.Style
-	styleDelCur, styleInsCur, styleModCur, styleVoidCur                   lipgloss.Style
-	styleStModified, styleStOnlyLeft, styleStOnlyRight, styleStSame       lipgloss.Style
-	styleGroup                                                            lipgloss.Style
-	styleSelected                                                         lipgloss.Style
+	// focused-pane variants: raised bar with accent text
+	styleHeaderTextF, styleHeaderDimF, styleHeaderSepF, styleBarF, styleDirtyF lipgloss.Style
+	styleGutter, styleSep, styleMark                                           lipgloss.Style
+	styleFooterText, styleFooterKey, styleStatus                               lipgloss.Style
+	styleDel, styleIns, styleMod, styleVoid                                    lipgloss.Style
+	styleApplied, styleAppliedCur, styleAppliedMark                            lipgloss.Style
+	styleStApplied                                                             lipgloss.Style
+	styleModEmph, styleModEmphCur                                              lipgloss.Style
+	styleDelCur, styleInsCur, styleModCur, styleVoidCur                        lipgloss.Style
+	styleStModified, styleStOnlyLeft, styleStOnlyRight, styleStSame            lipgloss.Style
+	styleGroup                                                                 lipgloss.Style
+	styleSelected                                                              lipgloss.Style
 )
 
 func initStyles(t theme) {
@@ -171,6 +173,11 @@ func initStyles(t theme) {
 	styleHeaderSep = fgbg(t.sep, t.barBg)
 	styleBar = fgbg("", t.barBg)
 	styleDirty = fgbg(t.accent, t.barBg).Bold(true)
+	styleHeaderTextF = fgbg(t.accent, t.selBg).Bold(true)
+	styleHeaderDimF = fgbg(t.subtle, t.selBg)
+	styleHeaderSepF = fgbg(t.sep, t.selBg)
+	styleBarF = fgbg("", t.selBg)
+	styleDirtyF = fgbg(t.text, t.selBg).Bold(true)
 	styleGutter = fgbg(t.muted, "")
 	styleSep = fgbg(t.sep, "")
 	styleMark = fgbg(t.accent, "").Bold(true)
@@ -199,9 +206,21 @@ func initStyles(t theme) {
 	styleGroup = fgbg(t.subtle, "").Bold(true)
 }
 
+// hdrStyles bundles the header bar styles for one focus state.
+type hdrStyles struct{ text, dim, sep, bar, dirty lipgloss.Style }
+
+func headerStyles(focused bool) hdrStyles {
+	if focused {
+		return hdrStyles{styleHeaderTextF, styleHeaderDimF, styleHeaderSepF, styleBarF, styleDirtyF}
+	}
+	return hdrStyles{styleHeaderText, styleHeaderDim, styleHeaderSep, styleBar, styleDirty}
+}
+
 // barPad right-pads a styled line to width w with the bar background.
-func barPad(s string, w int) string {
-	return s + styleBar.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(s))))
+func barPad(s string, w int) string { return barPadWith(s, w, styleBar) }
+
+func barPadWith(s string, w int, bar lipgloss.Style) string {
+	return s + bar.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(s))))
 }
 
 // footerBar renders the bottom bar: optional status, optional info,

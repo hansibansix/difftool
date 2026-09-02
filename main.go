@@ -194,7 +194,6 @@ func (a *app) View() string {
 		return a.settingsView()
 	}
 	if a.dir == nil {
-		a.file.focused = true
 		return a.file.View()
 	}
 	a.dir.focused = !a.focusDiff
