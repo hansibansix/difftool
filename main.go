@@ -147,6 +147,14 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.dir.status = a.note
 			}
 			return a, nil
+		case "h", "l", "left", "right", "<", ">":
+			if a.fileDirty() {
+				a.dir.status = "unsaved changes in " + filepath.Base(a.openedRel) + " — save or undo first"
+				return a, nil
+			}
+			cmd := a.dir.update(msg)
+			a.openSelected() // the copy changed the file on disk: show the new state
+			return a, cmd
 		}
 	}
 	prev := a.dir.selected()
