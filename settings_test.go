@@ -106,18 +106,20 @@ func TestIgnored(t *testing.T) {
 	orig, origX := cfg, extraIgnores
 	defer func() { cfg, extraIgnores = orig, origX }()
 	cfg.UseIgnores = true
-	cfg.IgnorePatterns = []string{"node_modules", "*.min.js", "amd/build"}
+	cfg.IgnorePatterns = []string{"node_modules", "*.min.js", "amd/build", ".fusebox"}
 	extraIgnores = []string{"*.log"}
 	cases := map[string]bool{
-		"node_modules":       true,
-		"sub/node_modules":   true, // basename match at any depth
-		"main.min.js":        true,
-		"amd/src/x.js":       false,
-		"amd/build":          true,
-		"debug.log":          true, // from -x
-		"sub/deep/trace.log": true,
-		"lib.php":            false,
-		"amd/build.php":      false,
+		"node_modules":        true,
+		"sub/node_modules":    true, // basename match at any depth
+		".fusebox/cache.json": true, // files below an ignored directory
+		"a/.fusebox/b/c.php":  true,
+		"main.min.js":         true,
+		"amd/src/x.js":        false,
+		"amd/build":           true,
+		"debug.log":           true, // from -x
+		"sub/deep/trace.log":  true,
+		"lib.php":             false,
+		"amd/build.php":       false,
 	}
 	for rel, want := range cases {
 		if got := ignored(rel); got != want {

@@ -99,8 +99,9 @@ Changes apply live and are saved to `~/.config/difftool/config.json` on close.
 Directory scans (and git mode) skip files and folders matching the glob
 patterns in `ignore_patterns` (defaults: `node_modules`, `vendor`, VCS/IDE
 metadata, `__pycache__`, minified assets, swap/OS junk); matching folders
-are pruned entirely. Patterns without `/` match the basename at any depth,
-patterns with `/` match the relative path. `-x 'pat,pat'` adds patterns for
+are pruned entirely. Patterns without `/` match any path component (a
+directory name hides its whole subtree), patterns with `/` match the
+relative path. `-x 'pat,pat'` adds patterns for
 one run; the settings menu toggles all patterns on/off, and `enter` on that
 entry opens an editor to add (`a`) and delete (`d`) patterns.
 

@@ -87,21 +87,26 @@ func saveConfigTo(path string) error {
 
 // ignored reports whether a slash-relative path matches an ignore pattern.
 // Patterns containing a slash match against the relative path, others
-// against the basename (glob syntax, * does not cross /).
+// against every path component (so a directory name ignores its whole
+// subtree even when the list is not rescanned, as in git mode).
 func ignored(rel string) bool {
 	if !cfg.UseIgnores {
 		return false
 	}
 	rel = filepath.ToSlash(rel)
-	base := path.Base(rel)
+	parts := strings.Split(rel, "/")
 	match := func(pats []string) bool {
 		for _, p := range pats {
 			if strings.ContainsRune(p, '/') {
 				if ok, _ := path.Match(p, rel); ok {
 					return true
 				}
-			} else if ok, _ := path.Match(p, base); ok {
-				return true
+				continue
+			}
+			for _, part := range parts {
+				if ok, _ := path.Match(p, part); ok {
+					return true
+				}
 			}
 		}
 		return false
