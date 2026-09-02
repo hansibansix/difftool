@@ -150,27 +150,27 @@ startup.
 
 ### Prebuilt binary
 
-Each `v*` tag publishes `tar.gz` archives for linux and macOS on amd64 and
-arm64. The repository is private, so downloads need an authenticated
-[`gh`](https://cli.github.com/) (a plain `curl` of the asset URL gets a 404):
+Every `v*` tag publishes archives for linux and macOS on amd64 and arm64.
+The `latest/download` URL always points at the newest release:
 
 ```sh
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
-gh release download --repo hansibansix/difftool \
-    --pattern "*_${os}_${arch}.tar.gz" --dir /tmp
-tar -xzf /tmp/difftool_*.tar.gz -C ~/.local/bin
+curl -fsSL "https://github.com/hansibansix/difftool/releases/latest/download/difftool_${os}_${arch}.tar.gz" |
+    tar -xz -C ~/.local/bin
 ```
 
-Omit `--pattern` to grab every platform, or pass a tag (`gh release download
-v0.1.0 ...`) to pin a version instead of taking the latest.
+Swap `latest/download` for `download/v0.1.1` to pin a version. To verify a
+download, grab `checksums.txt` from the same release and run
+`sha256sum --ignore-missing -c checksums.txt` beside the archive.
 
-To verify the download, fetch `checksums.txt` from the same release:
+### go install
 
 ```sh
-gh release download --repo hansibansix/difftool --pattern 'checksums.txt' --dir /tmp
-cd /tmp && sha256sum --ignore-missing -c checksums.txt
+go install github.com/hansibansix/difftool@latest
 ```
+
+Puts the binary in `$(go env GOPATH)/bin`.
 
 ### From source
 
@@ -183,8 +183,4 @@ go build -o ~/.local/bin/difftool .
 Requires the Go version in `go.mod`; there are no cgo dependencies, so
 `GOOS`/`GOARCH` cross-compile out of the box.
 
-`go install github.com/hansibansix/difftool@latest` does **not** work: the
-module is declared as `module difftool`, which does not match the repository
-path (and the repository is private). Clone and build instead.
-
-Make sure `~/.local/bin` is on your `PATH`.
+Make sure the target directory is on your `PATH`.
