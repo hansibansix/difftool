@@ -244,27 +244,31 @@ func (a *app) updateIgnoreEditor(k tea.KeyMsg) {
 func (a *app) ignoreEditorView() string {
 	var b strings.Builder
 	b.WriteString(barPad(styleBar.Render(" ")+styleHeaderText.Render("ignore patterns"), a.w) + "\n")
-	body := []string{""}
+	bodyH := max(1, a.h-2)
+	body := []string{styleGutter.Render("  globs; without / they match the basename at any depth, with / the relative path")}
+	if a.ignInput {
+		body = append(body, "  "+styleStatus.Render("new pattern: ")+a.ignText+"▏")
+	}
+	body = append(body, "")
+	var list []string
 	for i, p := range cfg.IgnorePatterns {
 		if i == a.ignSel && !a.ignInput {
-			body = append(body, styleMark.Render("▌")+styleSelected.Render(padCell(" "+p, 40)))
+			list = append(list, styleMark.Render("▌")+styleSelected.Render(padCell(" "+p, 40)))
 		} else {
-			body = append(body, "  "+p)
+			list = append(list, "  "+p)
 		}
 	}
 	for _, p := range extraIgnores {
-		body = append(body, "  "+styleGutter.Render(p+"  (from -x, this run only)"))
+		list = append(list, "  "+styleGutter.Render(p+"  (from -x, this run only)"))
 	}
-	if a.ignInput {
-		body = append(body, "", "  "+styleStatus.Render("new pattern: ")+a.ignText+"▏")
-	} else if len(cfg.IgnorePatterns) == 0 {
-		body = append(body, styleGutter.Render("  (none)"))
+	if len(cfg.IgnorePatterns) == 0 {
+		list = append(list, styleGutter.Render("  (none)"))
 	}
-	body = append(body, "", styleGutter.Render("  globs; without / they match the basename at any depth, with / the relative path"))
-	bodyH := max(1, a.h-2)
-	if len(body) > bodyH {
-		body = body[:bodyH]
-	}
+	// window the list around the selection so it fits the remaining height
+	room := max(1, bodyH-len(body))
+	start := clamp(a.ignSel-room/2, 0, max(0, len(list)-room))
+	list = list[start:min(len(list), start+room)]
+	body = append(body, list...)
 	for _, l := range body {
 		b.WriteString(l + "\n")
 	}
