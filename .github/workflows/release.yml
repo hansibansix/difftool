@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Build release binaries
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Pure-Go deps, so every target cross-compiles from this one runner.
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            export GOOS="${target%/*}" GOARCH="${target#*/}"
+            echo "==> building $GOOS/$GOARCH"
+            go build -trimpath -ldflags="-s -w" -o "dist/difftool" .
+            tar -czf "dist/difftool_${TAG}_${GOOS}_${GOARCH}.tar.gz" -C dist difftool
+            rm -f dist/difftool
+          done
+          cd dist && sha256sum *.tar.gz > checksums.txt
+          ls -la
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # --generate-notes builds the changelog from commits since the last tag.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
+          fi
