@@ -43,6 +43,7 @@ alternate full-screen instead). `.git` is skipped.
 | Key         | Action                                   |
 |-------------|------------------------------------------|
 | `enter`/`tab` | focus the diff pane (`tab`/`q` returns) |
+| `t`         | show / hide the tree pane (persisted)    |
 | `/`         | filter the list (esc clears)             |
 | `l` / `h`   | copy selected file to the other side     |
 | `a`         | toggle showing identical files           |

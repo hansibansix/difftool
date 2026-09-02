@@ -20,6 +20,7 @@ type config struct {
 	TabWidth       int      `json:"tab_width"`
 	ShowIdentical  bool     `json:"show_identical"`
 	Syntax         bool     `json:"syntax"`
+	ShowTree       bool     `json:"show_tree"`
 	IgnorePatterns []string `json:"ignore_patterns"`
 	UseIgnores     bool     `json:"use_ignores"`
 }
@@ -32,7 +33,7 @@ var cfg = defaultConfig()
 func defaultConfig() config {
 	return config{
 		Theme: "rose-pine", Intraline: true, TabWidth: 4,
-		UseIgnores: true, Syntax: true,
+		UseIgnores: true, Syntax: true, ShowTree: true,
 		IgnorePatterns: []string{
 			"node_modules", "vendor", // dependency trees
 			".svn", ".hg", // VCS metadata (.git is always skipped)
@@ -192,6 +193,9 @@ func (a *app) menuItems() []menuItem {
 			cfg.ShowIdentical = !cfg.ShowIdentical
 			a.applySettings()
 		}},
+		{"tree pane (dirs)", func() string { return onOff(cfg.ShowTree) }, func(int) {
+			a.toggleTree()
+		}},
 		{"ignore patterns (dirs)", ignoreSummary, func(int) {
 			cfg.UseIgnores = !cfg.UseIgnores
 			a.applySettings()
@@ -210,6 +214,20 @@ func (a *app) applySettings() {
 		a.dir.showAll = cfg.ShowIdentical
 		a.dir.rebuildList()
 	}
+}
+
+// toggleTree shows/hides the tree pane in dir mode; hiding moves focus to
+// the diff so the tree does not stay full-screen.
+func (a *app) toggleTree() {
+	cfg.ShowTree = !cfg.ShowTree
+	if !cfg.ShowTree && a.file != nil {
+		a.focusDiff = true
+	}
+	a.layout()
+	if a.dir != nil {
+		a.dir.status = "tree pane " + onOff(cfg.ShowTree)
+	}
+	saveConfig()
 }
 
 // rescanDir re-walks the compared directories, e.g. after the ignore toggle

@@ -41,7 +41,7 @@ type app struct {
 
 func (a *app) Init() tea.Cmd { return nil }
 
-func (a *app) split() bool { return a.dir != nil && a.w >= minSplitWidth }
+func (a *app) split() bool { return a.dir != nil && cfg.ShowTree && a.w >= minSplitWidth }
 
 func (a *app) treeW() int { return clamp(a.w/3, 30, 50) }
 
@@ -110,6 +110,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			a.helpOpen = true
 			return a, nil
+		case "t":
+			if a.dir != nil {
+				a.toggleTree()
+				return a, nil
+			}
 		}
 	}
 	if a.dir == nil {

@@ -29,6 +29,7 @@ var helpSections = []struct {
 	{"directory view", []helpEntry{
 		{"enter · tab", "focus the diff pane (tab returns)"},
 		{"j / k", "select file; the diff pane follows"},
+		{"t", "show / hide the tree pane"},
 		{"l / h", "copy file to the other side"},
 		{"/", "filter list (esc clears)"},
 		{"a", "toggle identical files"},
