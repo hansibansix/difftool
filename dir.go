@@ -535,7 +535,7 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 		return ""
 	}
 	var b strings.Builder
-	lh, rh := displayPath(d.leftRoot), displayPath(d.rightRoot)
+	lh, rh := distinctTails(displayPath(d.leftRoot), displayPath(d.rightRoot))
 	if d.leftLabel != "" {
 		lh = d.leftLabel
 	}
@@ -544,8 +544,8 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 	}
 	sideW := max(4, (d.w-5)/2)
 	hs := headerStyles(focused)
-	head := hs.mark(focused) + hs.text.Render(truncLeft(lh, sideW)) +
-		hs.dim.Render(" ⇄ ") + hs.text.Render(truncLeft(rh, sideW))
+	head := hs.mark(focused) + hs.text.Render(shortenPath(lh, sideW)) +
+		hs.dim.Render(" ⇄ ") + hs.text.Render(shortenPath(rh, sideW))
 	b.WriteString(barPadWith(head, d.w, hs.bar) + "\n")
 
 	for i := d.top; i < d.top+d.bodyH(); i++ {

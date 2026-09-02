@@ -179,3 +179,34 @@ func TestRowAtLineAndSelectRow(t *testing.T) {
 		t.Fatalf("equal row must not move the cursor, cur = %d", m.cur)
 	}
 }
+
+func TestDistinctTails(t *testing.T) {
+	l, r := distinctTails("~/ws/foo-prod/htdocs/auth/plugin", "~/ws/foo-test/htdocs/auth/plugin")
+	if l != "foo-prod/htdocs/auth/plugin" || r != "foo-test/htdocs/auth/plugin" {
+		t.Fatalf("got %q %q", l, r)
+	}
+	l, r = distinctTails("/a/x", "/a/y")
+	if l != "x" || r != "y" {
+		t.Fatalf("got %q %q", l, r)
+	}
+	l, r = distinctTails("/same/dir", "/same/dir") // at least the last component stays
+	if l != "dir" || r != "dir" {
+		t.Fatalf("got %q %q", l, r)
+	}
+}
+
+func TestShortenPath(t *testing.T) {
+	p := "foo-prod/htdocs/auth/plugin/auth.php"
+	if got := shortenPath(p, 80); got != p {
+		t.Fatalf("fits: %q", got)
+	}
+	if got := shortenPath(p, 24); got != "foo-prod/…/auth.php" {
+		t.Fatalf("middle: %q", got)
+	}
+	if got := shortenPath(p, 30); got != "foo-prod/…/plugin/auth.php" {
+		t.Fatalf("keep as much as fits: %q", got)
+	}
+	if got := shortenPath("a/verylongfilename.php", 8); got != "…ame.php" {
+		t.Fatalf("fallback: %q", got)
+	}
+}

@@ -287,10 +287,14 @@ func (a *app) openSelected() {
 		return
 	}
 	m.roLeft, m.roRight = a.dir.roLeft, a.dir.roRight
-	m.leftName = filepath.Join(filepath.Base(a.dir.leftRoot), e.rel)
-	m.rightName = filepath.Join(filepath.Base(a.dir.rightRoot), e.rel)
+	// name each side from the first path component the roots differ in,
+	// so equal basenames (…/a/plugin vs …/b/plugin) stay distinguishable
+	lt, rt := distinctTails(displayPath(a.dir.leftRoot), displayPath(a.dir.rightRoot))
+	m.leftName = filepath.Join(lt, e.rel)
+	m.rightName = filepath.Join(rt, e.rel)
 	if a.dir.leftLabel != "" {
 		m.leftName = a.dir.leftLabel + ":" + e.rel
+		m.rightName = filepath.Join(displayPath(a.dir.rightRoot), e.rel)
 	}
 	if a.dir.roRight {
 		m.rightName = a.dir.rightLabel + ":" + e.rel

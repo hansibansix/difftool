@@ -1092,12 +1092,44 @@ func pathCell(p string, w int, dirty bool, hs hdrStyles) string {
 	if dirty {
 		avail -= 2
 	}
-	dir, base := filepath.Split(truncLeft(p, avail))
+	dir, base := filepath.Split(shortenPath(p, avail))
 	s := hs.dim.Render(dir) + hs.text.Render(base)
 	if dirty {
 		s += hs.bar.Render(" ") + hs.dirty.Render("*")
 	}
 	return barPadWith(s, w, hs.bar)
+}
+
+// distinctTails strips the leading path components a and b have in common,
+// so both start at the first component that differs (at least the last
+// component is always kept).
+func distinctTails(a, b string) (string, string) {
+	as, bs := strings.Split(a, "/"), strings.Split(b, "/")
+	i := 0
+	for i < len(as)-1 && i < len(bs)-1 && as[i] == bs[i] {
+		i++
+	}
+	return strings.Join(as[i:], "/"), strings.Join(bs[i:], "/")
+}
+
+// shortenPath fits p into w cells by dropping middle components
+// ("a/b/c/d.php" → "a/…/d.php"), so the distinguishing head and the file
+// name survive; falls back to left truncation.
+func shortenPath(p string, w int) string {
+	if runewidth.StringWidth(p) <= w {
+		return p
+	}
+	parts := strings.Split(p, "/")
+	for len(parts) > 2 {
+		// drop the component after the head: keeps the head and as much of
+		// the tail (the file's parent dirs) as fits
+		parts = append(parts[:1], parts[2:]...)
+		cand := parts[0] + "/…/" + strings.Join(parts[1:], "/")
+		if runewidth.StringWidth(cand) <= w {
+			return cand
+		}
+	}
+	return truncLeft(p, w)
 }
 
 // truncLeft keeps the tail of s within w display cells, marking the cut with "…".
