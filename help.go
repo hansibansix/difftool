@@ -41,6 +41,7 @@ var helpSections = []struct {
 	{"everywhere", []helpEntry{
 		{",", "settings (theme, whitespace, ignores, …)"},
 		{"?", "this help"},
+		{"mouse", "click a file or hunk to select it, wheel scrolls the pane under the pointer"},
 	}},
 }
 

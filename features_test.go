@@ -154,3 +154,28 @@ func TestFooterBarFitsWidth(t *testing.T) {
 		t.Fatalf("hint was cut: %q", got)
 	}
 }
+
+func TestRowAtLineAndSelectRow(t *testing.T) {
+	orig := cfg
+	defer func() { cfg = orig }()
+	cfg.Wrap = false
+	m := testModel(
+		[]string{"a", "b", "c", "d"},
+		[]string{"a", "B", "c", "D"},
+	)
+	m.w, m.h = 80, 20
+	if got := m.rowAtLine(3); got != 3 {
+		t.Fatalf("rowAtLine(3) = %d", got)
+	}
+	if got := m.rowAtLine(10); got != -1 {
+		t.Fatalf("beyond content: %d", got)
+	}
+	m.selectRow(3) // row of d/D, the second change
+	if m.cur != 1 {
+		t.Fatalf("cur = %d", m.cur)
+	}
+	m.selectRow(0) // equal row: cursor unchanged
+	if m.cur != 1 {
+		t.Fatalf("equal row must not move the cursor, cur = %d", m.cur)
+	}
+}

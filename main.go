@@ -132,20 +132,42 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := a.file.update(msg)
 		return a, cmd
 	}
-	if a.focusDiff && a.file != nil {
-		if k, ok := msg.(tea.KeyMsg); ok && k.String() == "tab" && !a.file.searchInput {
-			a.focusDiff = false
-			a.dir.refreshSelected()
-			return a, nil
+	// mouse events go to the pane under the pointer; a click also focuses it
+	if mm, ok := msg.(tea.MouseMsg); ok && a.split() {
+		toDiff := mm.X > a.treeW() && a.file != nil
+		if mm.Action == tea.MouseActionPress && mm.Button == tea.MouseButtonLeft {
+			a.focusDiff = toDiff
 		}
-		wasDirty := a.fileDirty()
-		cmd := a.file.update(msg)
-		if wasDirty && !a.fileDirty() {
-			a.dir.refreshSelected() // saved (or undone to the saved state): re-read the status
+		if toDiff {
+			mm.X -= a.treeW() + 1
+			return a.updateDiff(mm)
 		}
-		return a, cmd
+		return a.updateTree(mm)
 	}
-	// tree pane focused
+	if a.focusDiff && a.file != nil {
+		return a.updateDiff(msg)
+	}
+	return a.updateTree(msg)
+}
+
+// updateDiff routes a message to the diff pane in dir mode.
+func (a *app) updateDiff(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyMsg); ok && k.String() == "tab" && !a.file.searchInput {
+		a.focusDiff = false
+		a.dir.refreshSelected()
+		return a, nil
+	}
+	wasDirty := a.fileDirty()
+	cmd := a.file.update(msg)
+	if wasDirty && !a.fileDirty() {
+		a.dir.refreshSelected() // saved (or undone to the saved state): re-read the status
+	}
+	return a, cmd
+}
+
+// updateTree routes a message to the tree pane; a changed selection opens
+// the new file in the diff pane unless the current one has unsaved changes.
+func (a *app) updateTree(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok && !a.dir.filterInput {
 		switch k.String() {
 		case "enter", "tab":

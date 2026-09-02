@@ -465,6 +465,12 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 			d.move(-1)
 		case tea.MouseButtonWheelDown:
 			d.move(1)
+		case tea.MouseButtonLeft:
+			if msg.Action == tea.MouseActionPress {
+				if r := d.rowAt(d.top + msg.Y - 1); r != nil && r.header == "" {
+					d.sel = d.top + msg.Y - 1
+				}
+			}
 		}
 	case tea.KeyMsg:
 		if d.filterInput {

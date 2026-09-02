@@ -459,6 +459,10 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.scrollH(-8)
 		case tea.MouseButtonWheelRight:
 			m.scrollH(8)
+		case tea.MouseButtonLeft:
+			if msg.Action == tea.MouseActionPress {
+				m.selectRow(m.rowAtLine(msg.Y - 1))
+			}
 		}
 		m.clampScroll()
 	case tea.KeyMsg:
@@ -587,8 +591,7 @@ func (m *model) view(focused bool) string {
 	if m.w == 0 || m.h == 0 {
 		return ""
 	}
-	paneW := max(10, (m.w-3)/2)
-	gutW := len(fmt.Sprint(max(len(m.left), len(m.right), 1)))
+	paneW, gutW, textW := m.geometry()
 	var b strings.Builder
 
 	hs := headerStyles(focused)
@@ -603,7 +606,6 @@ func (m *model) view(focused bool) string {
 		curCi, curAi = m.nav[m.cur].ci, m.nav[m.cur].ai
 	}
 	pad := strings.Repeat(" ", max(0, m.w-1-(2+2*paneW)))
-	textW := max(1, paneW-gutW-2)
 	lines := 0
 	for i := m.top; lines < m.bodyH(); i++ {
 		sb := m.scrollbar(lines)
@@ -731,6 +733,53 @@ func (m *model) scrollbar(bi int) string {
 		return st.Foreground(lipgloss.Color(fg)).Render("▐")
 	}
 	return st.Render(" ")
+}
+
+// geometry returns the pane width, gutter width and text width of a side.
+func (m *model) geometry() (paneW, gutW, textW int) {
+	paneW = max(10, (m.w-3)/2)
+	gutW = len(fmt.Sprint(max(len(m.left), len(m.right), 1)))
+	return paneW, gutW, max(1, paneW-gutW-2)
+}
+
+// rowAtLine maps a body screen line to a row index (-1 if none), taking
+// wrapped rows into account.
+func (m *model) rowAtLine(y int) int {
+	if y < 0 {
+		return -1
+	}
+	if !cfg.Wrap {
+		if r := m.top + y; r < len(m.rows) {
+			return r
+		}
+		return -1
+	}
+	_, _, textW := m.geometry()
+	lines := 0
+	for i := m.top; i < len(m.rows); i++ {
+		r := m.rows[i]
+		n := max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
+		if y < lines+n {
+			return i
+		}
+		lines += n
+	}
+	return -1
+}
+
+// selectRow moves the cursor to the change or applied hunk containing row.
+func (m *model) selectRow(row int) {
+	if row < 0 || row >= len(m.rows) {
+		return
+	}
+	r := m.rows[row]
+	ai, _ := m.appliedAt(r)
+	for i, t := range m.nav {
+		if (t.ci >= 0 && t.ci == r.ci) || (t.ai >= 0 && t.ai == ai) {
+			m.cur = i
+			return
+		}
+	}
 }
 
 // wrapCount is the number of screen lines a wrapped line needs (1 for none).
