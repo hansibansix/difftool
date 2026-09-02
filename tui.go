@@ -977,9 +977,31 @@ func expandAll(lines []string) []string {
 	return out
 }
 
+// expandTabs prepares a line for display: tabs become spaces and control
+// characters become their Unicode control pictures (␍ for CR, …) — emitted
+// raw, a CR would move the cursor to column 0 and garble the whole row.
 func expandTabs(s string) string {
-	return strings.ReplaceAll(s, "\t", strings.Repeat(" ", cfg.TabWidth))
+	s = strings.ReplaceAll(s, "\t", strings.Repeat(" ", cfg.TabWidth))
+	if !strings.ContainsFunc(s, isControl) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == 0x7f:
+			b.WriteRune('␡')
+		case r < 0x20:
+			b.WriteRune(rune(0x2400 + r))
+		case r >= 0x80 && r < 0xa0:
+			b.WriteRune('�')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
+
+func isControl(r rune) bool { return r < 0x20 || (r >= 0x7f && r < 0xa0) }
 
 // clipAndStyle renders s from display column off into exactly width w,
 // styling runes inside spans with emph and the rest with base; clipped

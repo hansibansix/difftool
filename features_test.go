@@ -210,3 +210,20 @@ func TestShortenPath(t *testing.T) {
 		t.Fatalf("fallback: %q", got)
 	}
 }
+
+func TestExpandTabsControlChars(t *testing.T) {
+	orig := cfg
+	defer func() { cfg = orig }()
+	cfg.TabWidth = 2
+	got := expandTabs("a\tb\r\x1b[0m\x7f")
+	want := "a  b␍␛[0m␡"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if strings.ContainsFunc(got, isControl) {
+		t.Fatal("no control characters may reach the terminal")
+	}
+	if expandTabs("plain") != "plain" {
+		t.Fatal("plain text must pass through")
+	}
+}
