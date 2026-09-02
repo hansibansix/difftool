@@ -130,7 +130,7 @@ hints always show the active bindings.
 "keys": {
   "file": { "apply-right": ["l", "right"], "apply-left": ["h", "left"], "save": ["ctrl+s"] },
   "dir":  { "quit": ["q"] },
-  "global": { "settings": ["ctrl+,"] }
+  "global": { "help": ["f1", "?"] }
 }
 ```
 
