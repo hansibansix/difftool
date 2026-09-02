@@ -70,6 +70,30 @@ func (s dirStatus) style() lipgloss.Style {
 type dirEntry struct {
 	rel    string
 	status dirStatus
+	// diffstat, computed lazily for visible rows; hasStat guards the cache
+	add, del int
+	hasStat  bool
+}
+
+// diffstat fills in the added/removed line counts of an entry.
+func (d *dirModel) diffstat(e *dirEntry) {
+	e.hasStat = true
+	e.add, e.del = 0, 0
+	l, r := filepath.Join(d.leftRoot, e.rel), filepath.Join(d.rightRoot, e.rel)
+	if isBinary(l) || isBinary(r) {
+		return
+	}
+	ll, _, errL := readLines(l)
+	rl, _, errR := readLines(r)
+	if errL != nil || errR != nil {
+		return
+	}
+	for _, c := range diffChunks(ll, rl) {
+		if c.kind == kindChange {
+			e.add += c.r1 - c.r0
+			e.del += c.l1 - c.l0
+		}
+	}
 }
 
 // dirRow is one visible list row: a directory group header or a file.
@@ -164,7 +188,7 @@ func (d *dirModel) setEntries(rels []string) {
 	})
 	d.entries = d.entries[:0]
 	for _, rel := range rels {
-		d.entries = append(d.entries, dirEntry{rel, d.compare(rel)})
+		d.entries = append(d.entries, dirEntry{rel: rel, status: d.compare(rel)})
 	}
 	d.rebuildList()
 }
@@ -300,6 +324,7 @@ func (d *dirModel) refreshSelected() {
 	}
 	old := e.status
 	e.status = d.compare(e.rel)
+	e.hasStat = false
 	// a pair synced in this session stays visible instead of vanishing
 	if e.status == stSame && old != stSame {
 		e.status = stApplied
@@ -385,6 +410,7 @@ func (d *dirModel) copyEntry(toRight bool) {
 	}
 	d.undo = append(d.undo, u)
 	e.status = stApplied
+	e.hasStat = false
 	d.status = "✓ copied " + arrow + " " + e.rel
 	d.rebuildList()
 }
@@ -411,6 +437,7 @@ func (d *dirModel) undoCopy() {
 	for i := range d.entries {
 		if d.entries[i].rel == u.rel {
 			d.entries[i].status = u.status
+			d.entries[i].hasStat = false
 		}
 	}
 	d.rebuildList()
@@ -526,10 +553,18 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 				styleStSame.Render(fmt.Sprintf(" · %d", r.n)) + "\n")
 			continue
 		}
-		e := d.entries[r.ei]
+		e := &d.entries[r.ei]
 		label := e.status.label()
+		stat := ""
 		if d.w < 50 { // narrow tree pane: the glyph color carries the status
 			label = ""
+		} else {
+			if !e.hasStat {
+				d.diffstat(e)
+			}
+			if e.add+e.del > 0 {
+				stat = fmt.Sprintf("+%d −%d", e.add, e.del)
+			}
 		}
 		st, nameSt := e.status.style(), lipgloss.NewStyle()
 		mark, pad := " ", lipgloss.NewStyle()
@@ -541,7 +576,11 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 				mark = styleGutter.Render("▌")
 			}
 		}
-		nameW := max(4, d.w-4-2-runewidth.StringWidth(label)-3)
+		statW := 0
+		if stat != "" {
+			statW = runewidth.StringWidth(stat) + 2
+		}
+		nameW := max(4, d.w-4-2-runewidth.StringWidth(label)-3-statW)
 		unsaved := ""
 		if e.rel == dirtyRel {
 			unsaved = " *"
@@ -549,9 +588,15 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 		}
 		name := runewidth.Truncate(filepath.Base(e.rel), nameW, "…")
 		gap := strings.Repeat(" ", max(1, nameW-runewidth.StringWidth(name)+1))
+		statStr := ""
+		if stat != "" {
+			plus, minus, _ := strings.Cut(stat, " ")
+			statStr = styleStOnlyRight.Background(pad.GetBackground()).Render(plus) + pad.Render(" ") +
+				styleStOnlyLeft.Background(pad.GetBackground()).Render(minus) + pad.Render("  ")
+		}
 		b.WriteString(mark + pad.Render("   ") + st.Render(e.status.glyph()) +
 			nameSt.Render(" "+name) + styleMark.Render(unsaved) + nameSt.Render(gap) +
-			st.Render(label) + pad.Render(" ") + "\n")
+			statStr + st.Render(label) + pad.Render(" ") + "\n")
 	}
 
 	info := d.countsInfo()

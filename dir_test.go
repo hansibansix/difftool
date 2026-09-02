@@ -184,3 +184,25 @@ func TestUndoCopy(t *testing.T) {
 		t.Fatalf("empty stack: %q", d.status)
 	}
 }
+
+func TestDiffstat(t *testing.T) {
+	l, r := setupDirs(t)
+	writeTestFile(t, filepath.Join(l, "mod.txt"), "a\nb\nc\n")
+	writeTestFile(t, filepath.Join(r, "mod.txt"), "a\nX\n")
+	d, err := newDirModel(l, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectRel(t, d, "mod.txt")
+	e := d.selected()
+	d.diffstat(e)
+	if e.add != 1 || e.del != 2 { // b,c removed; X added
+		t.Fatalf("stat = +%d -%d", e.add, e.del)
+	}
+	selectRel(t, d, "onlyl.txt")
+	e = d.selected()
+	d.diffstat(e)
+	if e.add != 0 || e.del != 1 {
+		t.Fatalf("only-left stat = +%d -%d", e.add, e.del)
+	}
+}
