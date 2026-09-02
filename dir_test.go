@@ -153,3 +153,33 @@ func TestRefreshSelectedMarksApplied(t *testing.T) {
 		t.Fatalf("expected stApplied, got %+v", d.selected())
 	}
 }
+
+func TestUndoCopy(t *testing.T) {
+	l, r := setupDirs(t)
+	d, err := newDirModel(l, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// overwrite case: mod.txt right side gets left content, undo restores "b"
+	selectRel(t, d, "mod.txt")
+	d.copyEntry(true)
+	d.undoCopy()
+	data, _ := os.ReadFile(filepath.Join(r, "mod.txt"))
+	if string(data) != "b\n" || d.selected().status != stModified {
+		t.Fatalf("undo overwrite: content %q status %v", data, d.selected().status)
+	}
+	// create case: onlyl.txt copied to the right, undo removes it again
+	selectRel(t, d, "onlyl.txt")
+	d.copyEntry(true)
+	d.undoCopy()
+	if _, err := os.Stat(filepath.Join(r, "onlyl.txt")); err == nil {
+		t.Fatal("undo must remove a file the copy created")
+	}
+	if d.selected().rel != "onlyl.txt" || d.selected().status != stOnlyLeft {
+		t.Fatalf("status after undo: %+v", d.selected())
+	}
+	d.undoCopy()
+	if d.status != "nothing to undo" {
+		t.Fatalf("empty stack: %q", d.status)
+	}
+}

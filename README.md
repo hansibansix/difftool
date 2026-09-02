@@ -46,6 +46,7 @@ alternate full-screen instead). `.git` is skipped.
 | `t`         | show / hide the tree pane (persisted)    |
 | `/`         | filter the list (esc clears)             |
 | `l` / `h`   | copy selected file to the other side     |
+| `u`         | undo the last copy                       |
 | `a`         | toggle showing identical files           |
 | `j` / `k`   | move selection                           |
 | `q` / `esc` | quit                                     |

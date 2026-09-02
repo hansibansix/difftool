@@ -93,6 +93,16 @@ type dirModel struct {
 	filter                string
 	filterInput           bool
 	focused               bool
+	undo                  []copyUndo
+}
+
+// copyUndo remembers what a tree-level copy overwrote so it can be undone.
+type copyUndo struct {
+	rel    string
+	dst    string
+	prev   []byte // nil: the destination did not exist
+	mode   os.FileMode
+	status dirStatus
 }
 
 func newDirModel(leftRoot, rightRoot string) (*dirModel, error) {
@@ -357,13 +367,51 @@ func (d *dirModel) copyEntry(toRight bool) {
 		d.status = "file missing on source side — nothing to copy " + arrow
 		return
 	}
+	u := copyUndo{rel: e.rel, dst: dst, status: e.status}
+	if info, err := os.Stat(dst); err == nil {
+		u.mode = info.Mode().Perm()
+		if u.prev, err = os.ReadFile(dst); err != nil {
+			d.status = "error: " + err.Error()
+			return
+		}
+	}
 	if err := copyFile(src, dst); err != nil {
 		d.status = "error: " + err.Error()
 		return
 	}
+	d.undo = append(d.undo, u)
 	e.status = stApplied
 	d.status = "✓ copied " + arrow + " " + e.rel
 	d.rebuildList()
+}
+
+// undoCopy reverts the last tree-level copy: the destination gets its
+// previous content back, or is removed if the copy created it.
+func (d *dirModel) undoCopy() {
+	if len(d.undo) == 0 {
+		d.status = "nothing to undo"
+		return
+	}
+	u := d.undo[len(d.undo)-1]
+	d.undo = d.undo[:len(d.undo)-1]
+	var err error
+	if u.prev == nil {
+		err = os.Remove(u.dst)
+	} else {
+		err = os.WriteFile(u.dst, u.prev, u.mode)
+	}
+	if err != nil {
+		d.status = "error: " + err.Error()
+		return
+	}
+	for i := range d.entries {
+		if d.entries[i].rel == u.rel {
+			d.entries[i].status = u.status
+		}
+	}
+	d.rebuildList()
+	d.selectRel(u.rel)
+	d.status = "↺ undone copy of " + u.rel
 }
 
 func copyFile(src, dst string) error {
@@ -450,6 +498,8 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 			d.copyEntry(true)
 		case "h", "left", "<":
 			d.copyEntry(false)
+		case "u":
+			d.undoCopy()
 		}
 	}
 	return nil
