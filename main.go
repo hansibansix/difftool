@@ -264,11 +264,14 @@ func (a *app) openSelected() {
 		a.note = "error: " + err.Error()
 		return
 	}
-	m.roLeft = a.dir.roLeft
+	m.roLeft, m.roRight = a.dir.roLeft, a.dir.roRight
 	m.leftName = filepath.Join(filepath.Base(a.dir.leftRoot), e.rel)
 	m.rightName = filepath.Join(filepath.Base(a.dir.rightRoot), e.rel)
 	if a.dir.leftLabel != "" {
 		m.leftName = a.dir.leftLabel + ":" + e.rel
+	}
+	if a.dir.roRight {
+		m.rightName = a.dir.rightLabel + ":" + e.rel
 	}
 	a.file, a.openedRel = m, e.rel
 	a.layout()
@@ -283,6 +286,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: difftool [-theme name] <left> <right>  (two files or two directories)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git [ref] [path]  (working tree vs. git ref)")
+		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git A..B [path]   (two git refs, read-only)")
 		fmt.Fprintf(os.Stderr, "themes: %s\n", themeNames())
 	}
 	flag.Parse()

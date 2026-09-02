@@ -83,7 +83,7 @@ type dirModel struct {
 	leftRoot, rightRoot string
 	// display labels for the header; differ from the roots in git mode
 	leftLabel, rightLabel string
-	roLeft                bool // left side is a git ref: no copy toward it
+	roLeft, roRight       bool // side is a git ref: no copy toward it
 	entries               []dirEntry
 	rows                  []dirRow
 	sel, top              int
@@ -355,6 +355,10 @@ func (d *dirModel) copyEntry(toRight bool) {
 	src := filepath.Join(d.leftRoot, e.rel)
 	dst := filepath.Join(d.rightRoot, e.rel)
 	arrow := "▶"
+	if toRight && d.roRight {
+		d.status = "right side is read-only (git ref)"
+		return
+	}
 	if !toRight {
 		if d.roLeft {
 			d.status = "left side is read-only (git ref)"

@@ -40,13 +40,18 @@ func runGitMode(ref, cwd, pathspec string) {
 }
 
 // newGitDirModel compares the working tree of cwd's repository against ref,
+// or two refs against each other when ref is "A..B" (both sides read-only),
 // optionally limited to pathspec (a file or directory, relative or absolute).
-// The ref-side blobs are materialized below a temp dir which is returned
-// for the caller to remove.
+// Ref-side blobs are materialized below a temp dir which is returned for the
+// caller to remove.
 func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 	root, err := gitCmd(cwd, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return nil, "", err
+	}
+	refA, refB, twoRefs := strings.Cut(ref, "..")
+	if !twoRefs {
+		refA = ref
 	}
 	spec := ""
 	if pathspec != "" {
@@ -70,9 +75,24 @@ func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 		os.RemoveAll(tmp)
 		return nil, "", err
 	}
-	diffArgs := []string{"-c", "core.quotepath=false", "diff", "--name-status", "--no-renames", ref, "--"}
+	diffArgs := []string{"-c", "core.quotepath=false", "diff", "--name-status", "--no-renames", refA}
+	if twoRefs {
+		diffArgs = append(diffArgs, refB)
+	}
+	diffArgs = append(diffArgs, "--")
 	if spec != "" {
 		diffArgs = append(diffArgs, spec)
+	}
+	leftRoot, rightRoot := tmp, root
+	if twoRefs {
+		leftRoot, rightRoot = filepath.Join(tmp, "a"), filepath.Join(tmp, "b")
+	}
+	materialize := func(r, rel, dir string) error {
+		blob, err := gitRaw(root, "show", r+":"+rel)
+		if err != nil {
+			return err
+		}
+		return writeFileMkdir(filepath.Join(dir, rel), blob, 0o644)
 	}
 	out, err := gitCmd(root, diffArgs...)
 	if err != nil {
@@ -85,28 +105,30 @@ func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 			continue
 		}
 		rels[rel] = true
-		if st == "A" {
-			continue // not in ref, nothing to materialize
+		if st != "A" { // present in A
+			if err := materialize(refA, rel, leftRoot); err != nil {
+				return fail(err)
+			}
 		}
-		blob, err := gitRaw(root, "show", ref+":"+rel)
+		if twoRefs && st != "D" { // present in B
+			if err := materialize(refB, rel, rightRoot); err != nil {
+				return fail(err)
+			}
+		}
+	}
+	if !twoRefs {
+		unArgs := []string{"-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard", "--"}
+		if spec != "" {
+			unArgs = append(unArgs, spec)
+		}
+		untracked, err := gitCmd(root, unArgs...)
 		if err != nil {
 			return fail(err)
 		}
-		if err := writeFileMkdir(filepath.Join(tmp, rel), blob, 0o644); err != nil {
-			return fail(err)
-		}
-	}
-	unArgs := []string{"-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard", "--"}
-	if spec != "" {
-		unArgs = append(unArgs, spec)
-	}
-	untracked, err := gitCmd(root, unArgs...)
-	if err != nil {
-		return fail(err)
-	}
-	for _, rel := range strings.Split(untracked, "\n") {
-		if rel != "" && !ignored(rel) {
-			rels[rel] = true
+		for _, rel := range strings.Split(untracked, "\n") {
+			if rel != "" && !ignored(rel) {
+				rels[rel] = true
+			}
 		}
 	}
 
@@ -114,10 +136,13 @@ func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 	if spec != "" {
 		rightLabel = filepath.Join(root, spec)
 	}
+	if twoRefs {
+		rightLabel = refB
+	}
 	d := &dirModel{
-		leftRoot: tmp, rightRoot: root,
-		leftLabel: ref, rightLabel: rightLabel,
-		roLeft: true,
+		leftRoot: leftRoot, rightRoot: rightRoot,
+		leftLabel: refA, rightLabel: rightLabel,
+		roLeft: true, roRight: twoRefs,
 	}
 	sorted := make([]string, 0, len(rels))
 	for rel := range rels {
@@ -126,6 +151,9 @@ func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 	d.setEntries(sorted)
 	if d.selected() == nil {
 		d.status = "working tree matches " + ref
+		if twoRefs {
+			d.status = refA + " and " + refB + " are identical"
+		}
 	}
 	return d, tmp, nil
 }

@@ -70,6 +70,7 @@ type model struct {
 	status      string
 	quitConfirm bool
 	roLeft      bool // left side is a git ref: no apply ◀
+	roRight     bool // right side is a git ref: no apply ▶
 	// display names for the header; differ from the paths in git mode
 	leftName, rightName string
 }
@@ -174,8 +175,7 @@ func (m *model) recompute() {
 
 // applyAll applies every pending change in one direction, undoable in one step.
 func (m *model) applyAll(toRight bool) {
-	if !toRight && m.roLeft {
-		m.status = "left side is read-only (git ref)"
+	if !m.canApply(toRight) {
 		return
 	}
 	pending := 0
@@ -276,8 +276,7 @@ func (m *model) apply(toRight bool) {
 		m.status = "chunk already applied"
 		return
 	}
-	if !toRight && m.roLeft {
-		m.status = "left side is read-only (git ref)"
+	if !m.canApply(toRight) {
 		return
 	}
 	m.pushUndo()
@@ -362,6 +361,19 @@ func (m *model) pushUndo() {
 func (m *model) leftDirty() bool  { return !sameLines(m.left, m.savedL) }
 func (m *model) rightDirty() bool { return !sameLines(m.right, m.savedR) }
 func (m *model) dirty() bool      { return m.leftDirty() || m.rightDirty() }
+
+// canApply checks the target side is writable, setting the status otherwise.
+func (m *model) canApply(toRight bool) bool {
+	if toRight && m.roRight {
+		m.status = "right side is read-only (git ref)"
+		return false
+	}
+	if !toRight && m.roLeft {
+		m.status = "left side is read-only (git ref)"
+		return false
+	}
+	return true
+}
 
 // sameLines reports whether two line slices are the same slice (identity,
 // not content): every edit produces a fresh slice, so identity == unchanged.
