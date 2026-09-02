@@ -66,8 +66,11 @@ func (a *app) helpView() string {
 		}
 	}
 	bodyH := max(1, a.h-2)
-	if len(body) > bodyH {
-		body = append(body[:bodyH-1], styleGutter.Render("  … (enlarge the window for the full list)"))
+	a.helpTop = clamp(a.helpTop, 0, max(0, len(body)-bodyH))
+	more := len(body) > a.helpTop+bodyH
+	body = body[a.helpTop:min(len(body), a.helpTop+bodyH)]
+	if more {
+		body[len(body)-1] = styleGutter.Render("  ⋯ j/k scroll")
 	}
 	var b strings.Builder
 	b.WriteString(barPad(styleBar.Render(" ")+styleHeaderText.Render("help"), a.w) + "\n")
@@ -77,6 +80,6 @@ func (a *app) helpView() string {
 	for i := len(body); i < bodyH; i++ {
 		b.WriteString("\n")
 	}
-	b.WriteString(footerBar(a.w, "", "", [][2]string{{"any key", "close"}}))
+	b.WriteString(footerBar(a.w, "", "", [][2]string{{"j/k", "scroll"}, {"any other key", "close"}}))
 	return b.String()
 }

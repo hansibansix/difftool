@@ -168,6 +168,9 @@ func onOff(b bool) string {
 	return "off"
 }
 
+// menuGroupBefore names the group header shown above an item.
+var menuGroupBefore = map[string]string{"theme": "view", "ignore whitespace": "diff", "show identical files": "directories"}
+
 type menuItem struct {
 	name   string
 	value  func() string
@@ -189,6 +192,9 @@ func (a *app) menuItems() []menuItem {
 		{"line wrap", func() string { return onOff(cfg.Wrap) }, func(int) {
 			cfg.Wrap = !cfg.Wrap
 		}, nil},
+		{"tab width", func() string { return fmt.Sprint(cfg.TabWidth) }, func(d int) {
+			cfg.TabWidth = cycle([]int{2, 4, 8}, cfg.TabWidth, d)
+		}, nil},
 		{"unified view", func() string { return onOff(cfg.Unified) }, func(int) {
 			cfg.Unified = !cfg.Unified
 		}, nil},
@@ -204,16 +210,13 @@ func (a *app) menuItems() []menuItem {
 		{"ignore lines matching · enter edits", regexSummary, func(int) {}, func() {
 			a.reInput, a.reText, a.reErr = true, cfg.IgnoreRegex, ""
 		}},
-		{"tab width", func() string { return fmt.Sprint(cfg.TabWidth) }, func(d int) {
-			cfg.TabWidth = cycle([]int{2, 4, 8}, cfg.TabWidth, d)
-		}, nil},
-		{"show identical files (dirs)", func() string { return onOff(cfg.ShowIdentical) }, func(int) {
+		{"show identical files", func() string { return onOff(cfg.ShowIdentical) }, func(int) {
 			cfg.ShowIdentical = !cfg.ShowIdentical
 		}, nil},
-		{"tree pane (dirs)", func() string { return onOff(cfg.ShowTree) }, func(int) {
+		{"tree pane", func() string { return onOff(cfg.ShowTree) }, func(int) {
 			a.toggleTree()
 		}, nil},
-		{"ignore patterns (dirs) · enter edits", ignoreSummary, func(int) {
+		{"ignore patterns · enter edits", ignoreSummary, func(int) {
 			cfg.UseIgnores = !cfg.UseIgnores
 			a.rescanDir()
 		}, nil},
@@ -453,29 +456,33 @@ func (a *app) settingsView() string {
 	valSelSt := valSt.Background(lipgloss.Color(th.selBg))
 	var b strings.Builder
 	b.WriteString(barPad(styleBar.Render(" ")+styleHeaderText.Render("settings"), a.w) + "\n")
-	items := a.menuItems()
-	for i := 0; i < max(1, a.h-2); i++ {
-		if i == len(items)+1 && a.reInput {
-			b.WriteString("  " + styleStatus.Render("ignore lines matching: ") + a.reText + "▏")
-			if a.reErr != "" {
-				b.WriteString("  " + styleStOnlyLeft.Render(a.reErr))
+	var lines []string
+	for i, it := range a.menuItems() {
+		if g, ok := menuGroupBefore[it.name]; ok {
+			if i > 0 {
+				lines = append(lines, "")
 			}
-			b.WriteString("\n")
-			continue
+			lines = append(lines, "  "+styleGroup.Render(g))
 		}
-		if i >= len(items) {
-			b.WriteString("\n")
-			continue
-		}
-		it := items[i]
 		name := padCell(it.name, 32)
 		if i == a.menuSel {
-			b.WriteString(styleMark.Render("▌") +
-				styleSelected.Render(" "+name+" ") +
-				valSelSt.Render(padCell(it.value(), 12)) + "\n")
+			lines = append(lines, styleMark.Render("▌")+styleSelected.Render(" "+name+" ")+valSelSt.Render(padCell(it.value(), 12)))
 		} else {
-			b.WriteString("  " + name + " " + valSt.Render(it.value()) + "\n")
+			lines = append(lines, "  "+name+" "+valSt.Render(it.value()))
 		}
+	}
+	if a.reInput {
+		l := "  " + styleStatus.Render("ignore lines matching: ") + a.reText + "▏"
+		if a.reErr != "" {
+			l += "  " + styleStOnlyLeft.Render(a.reErr)
+		}
+		lines = append(lines, "", l)
+	}
+	for i := 0; i < max(1, a.h-2); i++ {
+		if i < len(lines) {
+			b.WriteString(lines[i])
+		}
+		b.WriteString("\n")
 	}
 	hints := [][2]string{{"j/k", "move"}, {"h·l", "change"}, {"enter", "change / edit"}, {"q", "close & save"}}
 	if a.reInput {

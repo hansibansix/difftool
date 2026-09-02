@@ -36,6 +36,7 @@ type app struct {
 	menuOpen bool
 	menuSel  int
 	helpOpen bool
+	helpTop  int
 
 	// ignore pattern editor inside the settings menu
 	ignEdit, ignInput bool
@@ -119,8 +120,19 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	if a.helpOpen {
-		if _, ok := msg.(tea.KeyMsg); ok {
-			a.helpOpen = false
+		if k, ok := msg.(tea.KeyMsg); ok {
+			switch k.String() {
+			case "j", "down":
+				a.helpTop++
+			case "k", "up":
+				a.helpTop--
+			case "ctrl+d":
+				a.helpTop += (a.h - 2) / 2
+			case "ctrl+u":
+				a.helpTop -= (a.h - 2) / 2
+			default:
+				a.helpOpen, a.helpTop = false, 0
+			}
 		}
 		return a, nil
 	}

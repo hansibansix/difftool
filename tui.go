@@ -276,8 +276,8 @@ func (m *model) foldRows(ci int, c chunk) {
 		for j < n && !keep(j) {
 			j++
 		}
-		if j-i >= 2 {
-			m.rows = append(m.rows, row{l: -1, r: -1, ci: ci, fold: j - i})
+		if j-i >= 2 { // l/r name the first hidden line, for the fold label
+			m.rows = append(m.rows, row{l: c.l0 + i, r: c.r0 + i, ci: ci, fold: j - i})
 			i = j
 			continue
 		}
@@ -827,10 +827,20 @@ func (m *model) view(focused bool) string {
 
 	hs := headerStyles(focused)
 	halfW := max(10, (m.w-3)/2) // the header keeps two cells in unified view too
+	badges := modeBadges()
+	rightW := halfW
+	if bw := lipgloss.Width(badges); bw > 0 && halfW-bw-1 >= 12 {
+		rightW = halfW - bw - 1
+	} else {
+		badges = ""
+	}
 	head := hs.mark(focused) +
 		pathCell(displayPath(m.leftName), halfW, m.leftDirty(), hs) +
 		hs.sep.Render("│") +
-		pathCell(displayPath(m.rightName), halfW, m.rightDirty(), hs)
+		pathCell(displayPath(m.rightName), rightW, m.rightDirty(), hs)
+	if badges != "" {
+		head += hs.dim.Render(badges) + hs.bar.Render(" ")
+	}
 	b.WriteString(barPadWith(head, m.w, hs.bar) + "\n")
 
 	curCi, curAi := -1, -1
@@ -848,7 +858,7 @@ func (m *model) view(focused bool) string {
 		}
 		r := m.rows[i]
 		if r.fold > 0 {
-			b.WriteString(" " + foldLine(r.fold, m.w-2) + sb + "\n")
+			b.WriteString(" " + foldLine(r, m.w-2) + sb + "\n")
 			lines++
 			continue
 		}
@@ -917,9 +927,6 @@ func (m *model) view(focused bool) string {
 	if n := m.skippedCount(); n > 0 {
 		info += fmt.Sprintf(" · %d ignored", n)
 	}
-	if cfg.Unified {
-		info += " · unified"
-	}
 	if m.hOff > 0 && !cfg.Wrap {
 		if info != "" {
 			info += " · "
@@ -946,9 +953,32 @@ func (m *model) view(focused bool) string {
 	return b.String()
 }
 
-// foldLine draws the placeholder for n folded lines across w cells.
-func foldLine(n, w int) string {
-	label := fmt.Sprintf("╌╌╌╌ ⋯ %d unchanged lines ", n)
+// modeBadges names the view settings that change what the diff shows, for
+// the header bar; empty when everything is at its default.
+func modeBadges() string {
+	var b []string
+	for _, x := range []struct {
+		on   bool
+		name string
+	}{
+		{cfg.Unified, "unified"}, {cfg.Fold, "fold"}, {cfg.Wrap, "wrap"},
+		{cfg.IgnoreWs, "¬ws"}, {cfg.IgnoreBlank, "¬blank"}, {cfg.IgnoreRegex != "", "¬regex"},
+	} {
+		if x.on {
+			b = append(b, x.name)
+		}
+	}
+	return strings.Join(b, " · ")
+}
+
+// foldLine draws the placeholder for a fold row across w cells, naming the
+// hidden line range (both sides when their numbering differs).
+func foldLine(r row, w int) string {
+	rng := fmt.Sprintf("%d–%d", r.l+1, r.l+r.fold)
+	if r.r != r.l {
+		rng += fmt.Sprintf(" │ %d–%d", r.r+1, r.r+r.fold)
+	}
+	label := fmt.Sprintf("╌╌╌╌ ⋯ %d unchanged lines (%s) ", r.fold, rng)
 	return styleFold.Render(label + strings.Repeat("╌", max(0, w-runewidth.StringWidth(label))))
 }
 
@@ -1025,7 +1055,10 @@ func (m *model) rowAtLine(y int) int {
 	lines := 0
 	for i := m.top; i < len(m.rows); i++ {
 		r := m.rows[i]
-		n := max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
+		n := 1
+		if r.fold == 0 {
+			n = max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
+		}
 		if y < lines+n {
 			return i
 		}

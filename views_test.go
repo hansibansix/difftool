@@ -66,7 +66,7 @@ ok:
 
 func TestFoldLineWidth(t *testing.T) {
 	initStyles(themes["ansi"])
-	if w := lipgloss.Width(foldLine(12, 60)); w != 60 {
+	if w := lipgloss.Width(foldLine(row{l: 4, r: 6, fold: 12}, 60)); w != 60 {
 		t.Fatalf("width %d", w)
 	}
 }
