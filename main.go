@@ -191,18 +191,19 @@ func (a *app) updateTree(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	prev := a.dir.selected()
-	prevRel := ""
+	prevRel, prevStatus := "", stSame
 	if prev != nil {
-		prevRel = prev.rel
+		prevRel, prevStatus = prev.rel, prev.status
 	}
 	cmd := a.dir.update(msg)
-	if cur := a.dir.selected(); cur != nil && cur.rel != a.openedRel {
-		if a.fileDirty() {
-			a.dir.status = a.unsavedStatus()
-			a.dir.selectRel(prevRel)
-		} else {
-			a.openSelected()
-		}
+	cur := a.dir.selected()
+	switch {
+	case cur == nil:
+	case cur.rel != a.openedRel && a.fileDirty():
+		a.dir.status = a.unsavedStatus()
+		a.dir.selectRel(prevRel)
+	case cur.rel != a.openedRel, cur.rel == prevRel && cur.status != prevStatus:
+		a.openSelected() // new selection, or the file changed on disk (e.g. confirmed delete)
 	}
 	return a, cmd
 }
@@ -276,6 +277,11 @@ func (a *app) openSelected() {
 	}
 	lp := filepath.Join(a.dir.leftRoot, e.rel)
 	rp := filepath.Join(a.dir.rightRoot, e.rel)
+	if e.status == stDeleted {
+		a.note = "file deleted (u in the tree restores it)"
+		a.openedRel = e.rel
+		return
+	}
 	if isBinary(lp) || isBinary(rp) {
 		a.note = "binary file — not shown"
 		a.openedRel = e.rel

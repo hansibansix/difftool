@@ -22,6 +22,7 @@ const (
 	stOnlyLeft
 	stOnlyRight
 	stApplied // was different, made equal in this session
+	stDeleted // removed from the side it existed on in this session
 )
 
 func (s dirStatus) label() string {
@@ -34,6 +35,8 @@ func (s dirStatus) label() string {
 		return "only right"
 	case stApplied:
 		return "applied"
+	case stDeleted:
+		return "deleted"
 	}
 	return "same"
 }
@@ -49,6 +52,8 @@ func (s dirStatus) glyph() string {
 		return "▸"
 	case stApplied:
 		return "✓"
+	case stDeleted:
+		return "✕"
 	}
 	return "·"
 }
@@ -63,6 +68,8 @@ func (s dirStatus) style() lipgloss.Style {
 		return styleStOnlyRight
 	case stApplied:
 		return styleStApplied
+	case stDeleted:
+		return styleStOnlyLeft
 	}
 	return styleStSame
 }
@@ -116,6 +123,10 @@ type dirModel struct {
 	filter                string
 	filterInput           bool
 	undo                  []copyUndo
+	batch                 int    // id of the current undoable tree operation
+	pendingDelete         string // path awaiting y/n confirmation
+	syncStep              int    // sync all: 1 = awaiting direction, 2 = awaiting y/n
+	syncToRight           bool
 }
 
 // copyUndo remembers what a tree-level copy overwrote so it can be undone.
@@ -125,6 +136,7 @@ type copyUndo struct {
 	prev   []byte // nil: the destination did not exist
 	mode   os.FileMode
 	status dirStatus
+	batch  int // operations of one user action share a batch and undo together
 }
 
 func newDirModel(leftRoot, rightRoot string) (*dirModel, error) {
@@ -199,6 +211,8 @@ func (d *dirModel) compare(rel string) dirStatus {
 	_, lerr := os.Stat(l)
 	_, rerr := os.Stat(r)
 	switch {
+	case lerr != nil && rerr != nil:
+		return stDeleted
 	case lerr == nil && rerr != nil:
 		return stOnlyLeft
 	case lerr != nil && rerr == nil:
@@ -393,24 +407,24 @@ func (d *dirModel) copyEntry(toRight bool) {
 		arrow = "◀"
 	}
 	if _, err := os.Stat(src); err != nil {
-		d.status = "file missing on source side — nothing to copy " + arrow
-		return
-	}
-	u := copyUndo{rel: e.rel, dst: dst, status: e.status}
-	if info, err := os.Stat(dst); err == nil {
-		u.mode = info.Mode().Perm()
-		if u.prev, err = os.ReadFile(dst); err != nil {
-			d.status = "error: " + err.Error()
+		// no source: syncing means removing the file on the target side
+		if _, err := os.Stat(dst); err != nil {
+			d.status = "file exists on neither side"
 			return
 		}
+		side := "right"
+		if !toRight {
+			side = "left"
+		}
+		d.pendingDelete = dst
+		d.status = fmt.Sprintf("delete %s on the %s side? y/n", e.rel, side)
+		return
 	}
-	if err := copyFile(src, dst); err != nil {
+	d.batch++
+	if err := d.copyOp(e, toRight); err != nil {
 		d.status = "error: " + err.Error()
 		return
 	}
-	d.undo = append(d.undo, u)
-	e.status = stApplied
-	e.hasStat = false
 	d.status = "✓ copied " + arrow + " " + e.rel
 	d.rebuildList()
 }
@@ -422,27 +436,39 @@ func (d *dirModel) undoCopy() {
 		d.status = "nothing to undo"
 		return
 	}
-	u := d.undo[len(d.undo)-1]
-	d.undo = d.undo[:len(d.undo)-1]
-	var err error
-	if u.prev == nil {
-		err = os.Remove(u.dst)
-	} else {
-		err = os.WriteFile(u.dst, u.prev, u.mode)
-	}
-	if err != nil {
-		d.status = "error: " + err.Error()
-		return
-	}
-	for i := range d.entries {
-		if d.entries[i].rel == u.rel {
-			d.entries[i].status = u.status
-			d.entries[i].hasStat = false
+	// undo the whole batch of the last user action, newest file first
+	batch := d.undo[len(d.undo)-1].batch
+	n := 0
+	var last string
+	for len(d.undo) > 0 && d.undo[len(d.undo)-1].batch == batch {
+		u := d.undo[len(d.undo)-1]
+		d.undo = d.undo[:len(d.undo)-1]
+		var err error
+		if u.prev == nil {
+			err = os.Remove(u.dst)
+		} else {
+			err = os.WriteFile(u.dst, u.prev, u.mode)
 		}
+		if err != nil {
+			d.status = "error: " + err.Error()
+			d.rebuildList()
+			return
+		}
+		for i := range d.entries {
+			if d.entries[i].rel == u.rel {
+				d.entries[i].status = u.status
+				d.entries[i].hasStat = false
+			}
+		}
+		last = u.rel
+		n++
 	}
 	d.rebuildList()
-	d.selectRel(u.rel)
-	d.status = "↺ undone copy of " + u.rel
+	d.selectRel(last)
+	d.status = "↺ undone " + last
+	if n > 1 {
+		d.status = fmt.Sprintf("↺ undone %d files", n)
+	}
 }
 
 func copyFile(src, dst string) error {
@@ -473,6 +499,36 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 			}
 		}
 	case tea.KeyMsg:
+		if d.pendingDelete != "" {
+			if k := msg.String(); k == "y" || k == "Y" {
+				d.deletePending()
+			} else {
+				d.pendingDelete = ""
+				d.status = "delete cancelled"
+			}
+			return nil
+		}
+		if d.syncStep == 1 {
+			switch msg.String() {
+			case "l", "right", ">":
+				d.askSync(true)
+			case "h", "left", "<":
+				d.askSync(false)
+			default:
+				d.syncStep = 0
+				d.status = "sync cancelled"
+			}
+			return nil
+		}
+		if d.syncStep == 2 {
+			d.syncStep = 0
+			if k := msg.String(); k == "y" || k == "Y" {
+				d.syncAll(d.syncToRight)
+			} else {
+				d.status = "sync cancelled"
+			}
+			return nil
+		}
 		if d.filterInput {
 			switch msg.String() {
 			case "enter":
@@ -523,6 +579,9 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 			d.copyEntry(false)
 		case "u":
 			d.undoCopy()
+		case "A":
+			d.syncStep = 1
+			d.status = "sync all listed files: l ▶ · h ◀ · esc cancel"
 		}
 	}
 	return nil
@@ -621,7 +680,7 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 }
 
 func (d *dirModel) countsInfo() string {
-	var nm, nl, nr, na int
+	var nm, nl, nr, na, nd int
 	for _, e := range d.entries {
 		switch e.status {
 		case stModified:
@@ -632,6 +691,8 @@ func (d *dirModel) countsInfo() string {
 			nr++
 		case stApplied:
 			na++
+		case stDeleted:
+			nd++
 		}
 	}
 	var parts []string
@@ -646,6 +707,9 @@ func (d *dirModel) countsInfo() string {
 	}
 	if na > 0 {
 		parts = append(parts, fmt.Sprintf("%d applied", na))
+	}
+	if nd > 0 {
+		parts = append(parts, fmt.Sprintf("%d deleted", nd))
 	}
 	if len(parts) == 0 {
 		return "no differences"

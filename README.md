@@ -66,8 +66,9 @@ alternate full-screen instead). `.git` is skipped.
 | `enter`/`tab` | focus the diff pane (`tab`/`q` returns) |
 | `t`         | show / hide the tree pane (persisted)    |
 | `/`         | filter the list (esc clears)             |
-| `l` / `h`   | copy selected file to the other side     |
-| `u`         | undo the last copy                       |
+| `l` / `h`   | copy selected file to the other side; for a one-sided file the other direction deletes it (asks `y`) |
+| `A`         | sync ALL listed files (`l`/`h`, then `y`)  |
+| `u`         | undo the last copy / delete / sync       |
 | `a`         | toggle showing identical files           |
 | `j` / `k`   | move selection                           |
 | `q` / `esc` | quit                                     |
