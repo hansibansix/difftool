@@ -32,7 +32,6 @@ jobs:
 
       - name: Build release binaries
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
@@ -42,7 +41,7 @@ jobs:
             export GOOS="${target%/*}" GOARCH="${target#*/}"
             echo "==> building $GOOS/$GOARCH"
             go build -trimpath -ldflags="-s -w" -o "dist/difftool" .
-            tar -czf "dist/difftool_${TAG}_${GOOS}_${GOARCH}.tar.gz" -C dist difftool
+            tar -czf "dist/difftool_${GOOS}_${GOARCH}.tar.gz" -C dist difftool
             rm -f dist/difftool
           done
           cd dist && sha256sum *.tar.gz > checksums.txt
