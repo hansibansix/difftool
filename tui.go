@@ -22,6 +22,7 @@ type snapshot struct {
 	left, right []string
 	cur         int
 	applied     []appliedRegion
+	side        int // merge mode: which input was shown on the left
 }
 
 // appliedRegion remembers a chunk that was applied this session: both sides
@@ -73,8 +74,9 @@ type model struct {
 	vAnchor, vCur int
 	status        string
 	quitConfirm   bool
-	roLeft        bool // left side is a git ref: no apply ◀
-	roRight       bool // right side is a git ref: no apply ▶
+	roLeft        bool        // left side is a git ref: no apply ◀
+	roRight       bool        // right side is a git ref: no apply ▶
+	merge         *mergeState // set in 3-way merge mode
 	// display names for the header; differ from the paths in git mode
 	leftName, rightName string
 }
@@ -134,6 +136,9 @@ func (m *model) recompute() {
 	la, ra := m.left, m.right
 	if cfg.IgnoreWs {
 		la, ra = normalizeWs(m.left), normalizeWs(m.right)
+	}
+	if m.merge != nil {
+		ra = maskConflicts(ra)
 	}
 	m.chunks = diffChunks(la, ra)
 	m.rows = m.rows[:0]
@@ -389,7 +394,11 @@ func (m *model) shiftApplied(right bool, from, delta, skip int) {
 }
 
 func (m *model) pushUndo() {
-	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, append([]appliedRegion(nil), m.applied...)})
+	side := 0
+	if m.merge != nil {
+		side = m.merge.idx
+	}
+	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, append([]appliedRegion(nil), m.applied...), side})
 }
 
 func (m *model) leftDirty() bool  { return !sameLines(m.left, m.savedL) }
@@ -446,6 +455,9 @@ func (m *model) undoLast() {
 	}
 	s := m.undo[len(m.undo)-1]
 	m.undo = m.undo[:len(m.undo)-1]
+	if m.merge != nil && s.side != m.merge.idx {
+		m.setSide(s.side)
+	}
 	m.left, m.right, m.cur = s.left, s.right, s.cur
 	m.applied = s.applied
 	m.recompute()
@@ -563,6 +575,11 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 				m.status = "unsaved changes — q again to discard, s to save"
 				return nil
 			}
+			if m.merge != nil && m.conflicts() > 0 && !m.quitConfirm {
+				m.quitConfirm = true
+				m.status = fmt.Sprintf("%d conflicts remain — q again to quit anyway", m.conflicts())
+				return nil
+			}
 			if key == "ctrl+c" {
 				return tea.Quit
 			}
@@ -612,6 +629,10 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.status = "apply all: l ▶ · h ◀ · esc cancel"
 		case "X":
 			m.resetAll()
+		case "1", "2", "3":
+			if m.merge != nil {
+				m.switchSide(int(key[0] - '1'))
+			}
 		case "v":
 			if len(m.nav) == 0 || m.nav[m.cur].ci < 0 {
 				m.status = "select lines within a pending change"
@@ -744,6 +765,9 @@ func (m *model) view(focused bool) string {
 	}
 	if m.visual {
 		info += fmt.Sprintf(" · visual %d lines", max(m.vAnchor, m.vCur)-min(m.vAnchor, m.vCur)+1)
+	}
+	if m.merge != nil {
+		info += fmt.Sprintf(" · %d conflicts · left 1·2·3: %s", m.conflicts(), m.merge.sides[m.merge.idx].name)
 	}
 	status := m.status
 	if m.searchInput {

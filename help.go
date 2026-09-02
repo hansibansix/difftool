@@ -25,6 +25,7 @@ var helpSections = []struct {
 		{"i", "toggle intraline highlight"},
 		{"w", "toggle line wrap"},
 		{"J / K", "next / previous file (directory mode)"},
+		{"1 / 2 / 3", "merge mode: show LOCAL / BASE / REMOTE on the left"},
 		{"j k g G ^d ^u", "scroll, H / L horizontally"},
 		{"q · esc", "close (asks once on unsaved changes)"},
 	}},

@@ -304,11 +304,13 @@ func main() {
 	loadConfig()
 	themeName := flag.String("theme", envOr("DIFFTOOL_THEME", cfg.Theme), "color theme")
 	gitMode := flag.Bool("git", false, "compare working tree against a git ref (default HEAD)")
+	mergeMode := flag.Bool("merge", false, "3-way merge: -merge LOCAL BASE REMOTE MERGED (git mergetool)")
 	exclude := flag.String("x", "", "additional ignore patterns, comma-separated globs")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: difftool [-theme name] <left> <right>  (two files or two directories)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git [ref] [path]  (working tree vs. git ref)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git A..B [path]   (two git refs, read-only)")
+		fmt.Fprintln(os.Stderr, "       difftool -merge LOCAL BASE REMOTE MERGED    (git mergetool)")
 		fmt.Fprintf(os.Stderr, "themes: %s\n", themeNames())
 	}
 	flag.Parse()
@@ -322,6 +324,23 @@ func main() {
 		if p = strings.TrimSpace(p); p != "" {
 			extraIgnores = append(extraIgnores, p)
 		}
+	}
+	if *mergeMode {
+		if flag.NArg() != 4 {
+			flag.Usage()
+			os.Exit(2)
+		}
+		m, err := newMergeModel(flag.Arg(0), flag.Arg(1), flag.Arg(2), flag.Arg(3))
+		if err != nil {
+			fatal(err)
+		}
+		if err := runProgram(&app{file: m}); err != nil {
+			fatal(err)
+		}
+		if m.conflicts() > 0 {
+			os.Exit(1) // lets git mergetool (trustExitCode) treat the merge as unresolved
+		}
+		return
 	}
 	if *gitMode {
 		if flag.NArg() > 2 {

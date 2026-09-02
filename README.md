@@ -4,15 +4,34 @@ Side-by-side terminal diff viewer with chunk-wise apply, in the spirit of
 PhpStorm's diff window. Compares two files or two directories.
 
 ```
-difftool [-theme name] <left> <right>   # two files or two directories
-difftool [-theme name] -git [ref] [path]  # working tree vs. git ref (default HEAD)
+difftool [-theme name] <left> <right>       # two files or two directories
+difftool [-theme name] -git [ref] [path]    # working tree vs. git ref (default HEAD)
+difftool [-theme name] -git A..B [path]     # two refs, both read-only
+difftool -merge LOCAL BASE REMOTE MERGED    # 3-way merge (git mergetool)
 ```
 
 In git mode the left side is the ref version (read-only); applying a chunk
 or copying a file left → right reverts it in the working tree. Untracked
 files are listed as "only right". An optional path (file or directory)
 limits the comparison; a single existing path is taken as the path, not a
-ref — use the two-arg form to disambiguate.
+ref — use the two-arg form to disambiguate. `A..B` compares two refs
+without touching the working tree.
+
+## Merge mode
+
+3-way merge for `git mergetool`: the right pane is the merge result (seeded
+by `git merge-file`; conflicts appear as marker blocks, each diffing as one
+hunk), the left pane shows LOCAL, BASE or REMOTE (`1`/`2`/`3`). Applying a
+hunk onto a conflict block resolves it with that side; `s` writes MERGED.
+The exit code is 1 while conflicts remain, so enable `trustExitCode`:
+
+```
+[merge]
+    tool = difftool
+[mergetool "difftool"]
+    cmd = difftool -merge "$LOCAL" "$BASE" "$REMOTE" "$MERGED"
+    trustExitCode = true
+```
 
 ## File view
 
@@ -62,7 +81,9 @@ Applied chunks stay tinted with a `▶`/`◀` arrow showing the copy direction,
 remain reachable with `n`/`p`, and the view does not jump on apply.
 Files made equal during the session stay listed as `✓ applied` in the
 directory view.
-The directory list groups files by folder with colored status glyphs.
+The directory list groups files by folder with colored status glyphs and a
+per-file diffstat (`+12 −3`). Mouse: click a file or hunk to select it,
+click a pane to focus it, the wheel scrolls the pane under the pointer.
 
 ## Settings
 
