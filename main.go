@@ -80,6 +80,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.layout()
 		if a.dir != nil && a.file == nil && a.note == "" {
 			a.openSelected()
+			// start in the diff pane; the tree is one tab away
+			a.focusDiff = a.split() && a.file != nil
 		}
 		return a, nil
 	case closeFileMsg:
