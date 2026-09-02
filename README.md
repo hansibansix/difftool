@@ -22,6 +22,7 @@ ref — use the two-arg form to disambiguate.
 | `l` `→` `>`   | apply current chunk left → right    |
 | `h` `←` `<`   | apply current chunk right → left    |
 | `a`           | apply ALL pending (then `l`/`h`)    |
+| `v`           | select lines (`j`/`k`), `l`/`h` applies them |
 | `x` / `X`     | reset applied hunk / all            |
 | `u`           | undo last apply / reset / all       |
 | `/` `n`/`N`   | search, next/prev match             |

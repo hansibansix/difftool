@@ -67,10 +67,14 @@ type model struct {
 	matches     []int // row indices containing the search term
 	matchIdx    int
 	pendingAll  bool // 'a' pressed, waiting for the direction key
-	status      string
-	quitConfirm bool
-	roLeft      bool // left side is a git ref: no apply ◀
-	roRight     bool // right side is a git ref: no apply ▶
+
+	// visual mode: a row range inside the current chunk for partial apply
+	visual        bool
+	vAnchor, vCur int
+	status        string
+	quitConfirm   bool
+	roLeft        bool // left side is a git ref: no apply ◀
+	roRight       bool // right side is a git ref: no apply ▶
 	// display names for the header; differ from the paths in git mode
 	leftName, rightName string
 }
@@ -335,6 +339,36 @@ func (m *model) resetRegion(ai int) {
 	m.applied = append(m.applied[:ai], m.applied[ai+1:]...)
 }
 
+// chunkRows returns the first and last row index of the current chunk.
+func (m *model) chunkRows() (int, int) {
+	t := m.nav[m.cur]
+	c := m.chunks[t.ci]
+	return t.row, t.row + max(c.l1-c.l0, c.r1-c.r0) - 1
+}
+
+// applySelection applies only the visually selected rows of the current
+// chunk: the rows map to a sub-range on each side, which is applied like a
+// chunk of its own; the rest stays pending.
+func (m *model) applySelection(toRight bool) {
+	if !m.canApply(toRight) {
+		return
+	}
+	c := m.chunks[m.nav[m.cur].ci]
+	first, _ := m.chunkRows()
+	a, b := min(m.vAnchor, m.vCur)-first, max(m.vAnchor, m.vCur)-first+1
+	nL, nR := c.l1-c.l0, c.r1-c.r0
+	sub := chunk{kindChange, c.l0 + min(a, nL), c.l0 + min(b, nL), c.r0 + min(a, nR), c.r0 + min(b, nR)}
+	m.visual = false
+	if sub.l0 == sub.l1 && sub.r0 == sub.r1 {
+		m.status = "nothing to apply in the selection"
+		return
+	}
+	m.pushUndo()
+	m.applyChunk(sub, toRight)
+	m.status = fmt.Sprintf("applied %s %d lines", arrowOf(toRight), b-a)
+	m.recompute()
+}
+
 // shiftApplied moves applied regions starting at or after `from` on one
 // side by delta lines (skip excludes the region being edited).
 func (m *model) shiftApplied(right bool, from, delta, skip int) {
@@ -482,6 +516,24 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			}
 			return nil
 		}
+		if m.visual {
+			first, last := m.chunkRows()
+			switch key {
+			case "j", "down":
+				m.vCur = min(m.vCur+1, last)
+			case "k", "up":
+				m.vCur = max(m.vCur-1, first)
+			case "l", "right", ">":
+				m.applySelection(true)
+			case "h", "left", "<":
+				m.applySelection(false)
+			case "esc", "v", "q":
+				m.visual = false
+				m.status = "selection cancelled"
+			}
+			m.top = clamp(m.top, max(0, m.vCur-m.bodyH()+1), min(m.vCur, m.maxTop()))
+			return nil
+		}
 		if m.pendingAll {
 			m.pendingAll = false
 			switch key {
@@ -560,6 +612,14 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.status = "apply all: l ▶ · h ◀ · esc cancel"
 		case "X":
 			m.resetAll()
+		case "v":
+			if len(m.nav) == 0 || m.nav[m.cur].ci < 0 {
+				m.status = "select lines within a pending change"
+				break
+			}
+			m.visual = true
+			m.vAnchor, m.vCur = m.nav[m.cur].row, m.nav[m.cur].row
+			m.status = "visual: j/k extend · l ▶ h ◀ apply lines · esc cancel"
 		case "J", "K":
 			d := 1
 			if key == "K" {
@@ -617,6 +677,9 @@ func (m *model) view(focused bool) string {
 		r := m.rows[i]
 		ai, toRight := m.appliedAt(r)
 		isCur := (curCi >= 0 && r.ci == curCi) || (curAi >= 0 && ai == curAi)
+		if m.visual { // highlight only the selected rows
+			isCur = i >= min(m.vAnchor, m.vCur) && i <= max(m.vAnchor, m.vCur)
+		}
 		mark := " "
 		if isCur {
 			mark = styleMark.Render("▌")
@@ -678,6 +741,9 @@ func (m *model) view(focused bool) string {
 	}
 	if m.search != "" && len(m.matches) > 0 && m.matchIdx >= 0 {
 		info += fmt.Sprintf(" · /%s %d/%d", m.search, m.matchIdx+1, len(m.matches))
+	}
+	if m.visual {
+		info += fmt.Sprintf(" · visual %d lines", max(m.vAnchor, m.vCur)-min(m.vAnchor, m.vCur)+1)
 	}
 	status := m.status
 	if m.searchInput {

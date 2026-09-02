@@ -191,3 +191,54 @@ func TestDirtyAfterUndoPastSave(t *testing.T) {
 		t.Fatalf("second save must write the undone content, got %q", data)
 	}
 }
+
+func TestApplySelection(t *testing.T) {
+	m := testModel(
+		[]string{"a", "x1", "x2", "x3", "z"},
+		[]string{"a", "y1", "y2", "y3", "z"},
+	)
+	// select the middle two rows of the 3-line chunk and apply them ▶
+	first, last := m.chunkRows()
+	if first != 1 || last != 3 {
+		t.Fatalf("chunk rows %d-%d", first, last)
+	}
+	m.visual, m.vAnchor, m.vCur = true, 2, 3
+	m.applySelection(true)
+	want := []string{"a", "y1", "x2", "x3", "z"}
+	if !reflect.DeepEqual(m.right, want) {
+		t.Fatalf("right = %v want %v", m.right, want)
+	}
+	if m.visual || len(m.applied) != 1 || m.applied[0].l0 != 2 || m.applied[0].l1 != 4 {
+		t.Fatalf("state after partial apply: visual=%v applied=%+v", m.visual, m.applied)
+	}
+	// the remaining line is still a pending change
+	pending := 0
+	for _, tg := range m.nav {
+		if tg.ci >= 0 {
+			pending++
+		}
+	}
+	if pending != 1 {
+		t.Fatalf("pending = %d, nav = %+v", pending, m.nav)
+	}
+	// undo restores everything in one step
+	m.undoLast()
+	if m.right[2] != "y2" || len(m.applied) != 0 {
+		t.Fatalf("undo: %v %v", m.right, m.applied)
+	}
+}
+
+func TestApplySelectionInsertion(t *testing.T) {
+	// left has 3 lines where right has 1: selecting rows beyond the right
+	// side's lines inserts them after the right side's part
+	m := testModel(
+		[]string{"a", "l1", "l2", "l3", "z"},
+		[]string{"a", "r1", "z"},
+	)
+	m.visual, m.vAnchor, m.vCur = true, 2, 3 // rows of l2,l3 (right side: padding)
+	m.applySelection(true)
+	want := []string{"a", "r1", "l2", "l3", "z"}
+	if !reflect.DeepEqual(m.right, want) {
+		t.Fatalf("right = %v want %v", m.right, want)
+	}
+}

@@ -17,6 +17,7 @@ var helpSections = []struct {
 		{"l → >", "apply current chunk left → right"},
 		{"h ← <", "apply current chunk right → left"},
 		{"a", "apply ALL pending chunks (then l ▶ or h ◀)"},
+		{"v", "select lines in the chunk (j/k), then l/h applies only those"},
 		{"x / X", "reset applied hunk under cursor / all"},
 		{"u", "undo last apply, reset or apply-all"},
 		{"s", "save modified file(s)"},
