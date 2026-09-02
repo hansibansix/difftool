@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type theme struct {
@@ -219,7 +220,8 @@ func footerBar(w int, status, info string, keys [][2]string) string {
 		parts = append(parts, styleFooterKey.Render(k[0])+styleFooterText.Render(" "+k[1]))
 	}
 	line += strings.Join(parts, styleFooterText.Render("  "))
-	return barPad(line, w)
+	// clip: the bar must never exceed its pane, or side-by-side layout breaks
+	return barPad(ansi.Truncate(line, w, ""), w)
 }
 
 // padCell right-pads a styled cell to width w (measuring visible width).

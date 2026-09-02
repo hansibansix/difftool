@@ -92,6 +92,7 @@ type dirModel struct {
 	status                string
 	filter                string
 	filterInput           bool
+	focused               bool
 }
 
 func newDirModel(leftRoot, rightRoot string) (*dirModel, error) {
@@ -253,6 +254,17 @@ func (d *dirModel) snapToFile(i int) int {
 		}
 	}
 	return -1
+}
+
+// selectRel moves the selection to the row showing rel, if listed.
+func (d *dirModel) selectRel(rel string) {
+	for i, r := range d.rows {
+		if r.header == "" && d.entries[r.ei].rel == rel {
+			d.sel = i
+			d.ensureVisible()
+			return
+		}
+	}
 }
 
 func (d *dirModel) selected() *dirEntry {
@@ -462,7 +474,11 @@ func (d *dirModel) view() string {
 		rh = d.rightLabel
 	}
 	sideW := max(4, (d.w-5)/2)
-	head := styleBar.Render(" ") + styleHeaderText.Render(tail(lh, sideW)) +
+	focus := styleBar.Render(" ")
+	if d.focused {
+		focus = styleDirty.Render("▌")
+	}
+	head := focus + styleHeaderText.Render(tail(lh, sideW)) +
 		styleHeaderDim.Render(" ⇄ ") + styleHeaderText.Render(tail(rh, sideW))
 	b.WriteString(barPad(head, d.w) + "\n")
 
@@ -479,6 +495,9 @@ func (d *dirModel) view() string {
 		}
 		e := d.entries[r.ei]
 		label := e.status.label()
+		if d.w < 50 { // narrow tree pane: the glyph color carries the status
+			label = ""
+		}
 		glyphSt, labelSt, nameSt := e.status.style(), e.status.style(), lipgloss.NewStyle()
 		mark, pad := " ", lipgloss.NewStyle()
 		if i == d.sel {
@@ -503,7 +522,7 @@ func (d *dirModel) view() string {
 		status = "/" + d.filter + "▏"
 	}
 	b.WriteString(footerBar(d.w, status, info, [][2]string{
-		{"enter", "open"}, {"h·l", "◀ copy ▶"}, {"/", "filter"},
+		{"tab", "diff"}, {"h·l", "◀ copy ▶"}, {"/", "filter"},
 		{"a", "show all"}, {"?", "help"}, {"q", "quit"},
 	}))
 	return b.String()

@@ -27,11 +27,12 @@ var helpSections = []struct {
 		{"q · esc", "close (asks once on unsaved changes)"},
 	}},
 	{"directory view", []helpEntry{
-		{"enter", "open file diff"},
+		{"enter · tab", "focus the diff pane (tab returns)"},
+		{"j / k", "select file; the diff pane follows"},
 		{"l / h", "copy file to the other side"},
 		{"/", "filter list (esc clears)"},
 		{"a", "toggle identical files"},
-		{"j k g G ^d ^u", "move selection"},
+		{"g G ^d ^u", "move selection"},
 		{"q · esc", "quit"},
 	}},
 	{"everywhere", []helpEntry{

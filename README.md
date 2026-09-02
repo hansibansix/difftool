@@ -36,11 +36,13 @@ ref — use the two-arg form to disambiguate.
 
 ## Directory view
 
-Lists differing files (modified / only left / only right), `.git` is skipped.
+Split layout: the file tree on the left, the diff of the selected file on
+the right (the diff follows the selection; below 90 columns the panes
+alternate full-screen instead). `.git` is skipped.
 
 | Key         | Action                                   |
 |-------------|------------------------------------------|
-| `enter`     | open file diff (esc/q returns to list)   |
+| `enter`/`tab` | focus the diff pane (`tab`/`q` returns) |
 | `/`         | filter the list (esc clears)             |
 | `l` / `h`   | copy selected file to the other side     |
 | `a`         | toggle showing identical files           |

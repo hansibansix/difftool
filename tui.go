@@ -70,6 +70,7 @@ type model struct {
 	quitConfirm bool
 	embedded    bool // opened from the directory view; close instead of quit
 	roLeft      bool // left side is a git ref: no apply ◀
+	focused     bool // pane focus in split view (header marker)
 	// display names for the header; differ from the paths in git mode
 	leftName, rightName string
 }
@@ -595,7 +596,11 @@ func (m *model) View() string {
 	gutW := len(fmt.Sprint(max(len(m.left), len(m.right), 1)))
 	var b strings.Builder
 
-	head := styleBar.Render(" ") +
+	focus := styleBar.Render(" ")
+	if m.focused {
+		focus = styleDirty.Render("▌")
+	}
+	head := focus +
 		pathCell(m.leftName, paneW, m.dirtyL) +
 		styleHeaderSep.Render("│") +
 		pathCell(m.rightName, paneW, m.dirtyR)
