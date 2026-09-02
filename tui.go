@@ -655,21 +655,25 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			}
 			return nil
 		}
+		act := keys.file.action(key)
+		if key == "ctrl+c" {
+			act = "quit"
+		}
 		if m.visual {
 			first, last := m.chunkRows()
-			switch key {
-			case "j", "down":
+			switch act {
+			case "down":
 				m.vCur = min(m.vCur+1, last)
-			case "k", "up":
+			case "up":
 				m.vCur = max(m.vCur-1, first)
-			case "l", "right", ">":
+			case "apply-right":
 				m.applySelection(true)
-			case "h", "left", "<":
+			case "apply-left":
 				m.applySelection(false)
-			case "P":
+			case "patch":
 				m.visual = false
 				m.exportPatch(m.nav[m.cur].ci)
-			case "esc", "v", "q":
+			case "quit", "visual":
 				m.visual = false
 				m.status = "selection cancelled"
 			}
@@ -678,22 +682,22 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		}
 		if m.pendingAll {
 			m.pendingAll = false
-			switch key {
-			case "l", "right", ">":
+			switch act {
+			case "apply-right":
 				m.applyAll(true)
-			case "h", "left", "<":
+			case "apply-left":
 				m.applyAll(false)
 			default:
 				m.status = "apply all cancelled"
 			}
 			return nil
 		}
-		if key != "q" && key != "esc" && key != "ctrl+c" {
+		if act != "quit" {
 			m.quitConfirm = false
 			m.status = ""
 		}
-		switch key {
-		case "q", "esc", "ctrl+c":
+		switch act {
+		case "quit":
 			if key == "esc" && m.search != "" {
 				m.clearSearch()
 				m.status = "search cleared"
@@ -701,60 +705,60 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			}
 			if m.dirty() && !m.quitConfirm {
 				m.quitConfirm = true
-				m.status = "unsaved changes — q again to discard, s to save"
+				m.status = "unsaved changes — " + key + " again to discard, " + keys.file.first("save") + " to save"
 				return nil
 			}
 			if m.merge != nil && m.conflicts() > 0 && !m.quitConfirm {
 				m.quitConfirm = true
-				m.status = fmt.Sprintf("%d conflicts remain — q again to quit anyway", m.conflicts())
+				m.status = fmt.Sprintf("%d conflicts remain — %s again to quit anyway", m.conflicts(), key)
 				return nil
 			}
 			if key == "ctrl+c" {
 				return tea.Quit
 			}
 			return func() tea.Msg { return closeFileMsg{} }
-		case "j", "down":
+		case "down":
 			m.top++
-		case "k", "up":
+		case "up":
 			m.top--
-		case "ctrl+d":
+		case "half-down":
 			m.top += m.bodyH() / 2
-		case "ctrl+u":
+		case "half-up":
 			m.top -= m.bodyH() / 2
-		case "g":
+		case "top":
 			m.top = 0
-		case "G":
+		case "bottom":
 			m.top = m.maxTop()
-		case "i":
+		case "intraline":
 			cfg.Intraline = !cfg.Intraline
 			m.status = "intraline highlight " + onOff(cfg.Intraline)
-		case "w":
+		case "wrap":
 			cfg.Wrap = !cfg.Wrap
 			saveConfig()
 			m.status = "line wrap " + onOff(cfg.Wrap)
-		case "z":
+		case "fold":
 			cfg.Fold = !cfg.Fold
 			m.unfolded = nil
 			saveConfig()
 			m.recompute()
 			m.scrollToCur()
 			m.status = "fold unchanged " + onOff(cfg.Fold)
-		case "o":
+		case "unified":
 			cfg.Unified = !cfg.Unified
 			saveConfig()
 			m.recompute()
 			m.scrollToCur()
 			m.status = "unified view " + onOff(cfg.Unified)
-		case "e", "E":
-			return m.editIn(key == "e")
-		case "P":
+		case "edit-right", "edit-left":
+			return m.editIn(act == "edit-right")
+		case "patch":
 			m.exportPatch(-1)
-		case "H":
+		case "scroll-left":
 			m.scrollH(-8)
-		case "L":
+		case "scroll-right":
 			m.scrollH(8)
-		case "n", "]":
-			if key == "n" && m.search != "" {
+		case "next":
+			if m.search != "" {
 				m.gotoMatch(1)
 				break
 			}
@@ -762,55 +766,56 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 				m.cur++
 			}
 			m.scrollToCur()
-		case "N":
+		case "search-prev":
 			if m.search != "" {
 				m.gotoMatch(-1)
 			}
-		case "/":
+		case "search":
 			m.searchInput = true
 			m.search = ""
 			m.matches = nil
-		case "a":
+		case "apply-all":
 			m.pendingAll = true
-			m.status = "apply all: l ▶ · h ◀ · esc cancel"
-		case "X":
+			m.status = fmt.Sprintf("apply all: %s ▶ · %s ◀ · other key cancels", keys.file.first("apply-right"), keys.file.first("apply-left"))
+		case "reset-all":
 			m.resetAll()
-		case "1", "2", "3":
+		case "merge-local", "merge-base", "merge-remote":
 			if m.merge != nil {
-				m.switchSide(int(key[0] - '1'))
+				m.switchSide(map[string]int{"merge-local": 0, "merge-base": 1, "merge-remote": 2}[act])
 			}
-		case "v":
+		case "visual":
 			if len(m.nav) == 0 || m.nav[m.cur].ci < 0 {
 				m.status = "select lines within a pending change"
 				break
 			}
 			if cfg.Unified {
-				m.status = "line selection needs the side-by-side view (o)"
+				m.status = "line selection needs the side-by-side view (" + keys.file.first("unified") + ")"
 				break
 			}
 			m.visual = true
 			m.vAnchor, m.vCur = m.nav[m.cur].row, m.nav[m.cur].row
-			m.status = "visual: j/k extend · l ▶ h ◀ apply lines · esc cancel"
-		case "J", "K":
+			m.status = fmt.Sprintf("visual: %s extend · %s ▶ %s ◀ apply lines · esc cancel",
+				hint(keys.file, "down", "up"), keys.file.first("apply-right"), keys.file.first("apply-left"))
+		case "next-file", "prev-file":
 			d := 1
-			if key == "K" {
+			if act == "prev-file" {
 				d = -1
 			}
 			return func() tea.Msg { return switchFileMsg{d} }
-		case "p", "[":
+		case "prev":
 			if m.cur > 0 {
 				m.cur--
 			}
 			m.scrollToCur()
-		case "l", "right", ">":
+		case "apply-right":
 			m.apply(true)
-		case "h", "left", "<":
+		case "apply-left":
 			m.apply(false)
-		case "x":
+		case "reset":
 			m.resetApplied()
-		case "u":
+		case "undo":
 			m.undoLast()
-		case "s":
+		case "save":
 			m.save()
 		}
 		m.clampScroll()
@@ -946,9 +951,11 @@ func (m *model) view(focused bool) string {
 	if m.searchInput {
 		status = "/" + m.search + "▏"
 	}
+	fk := keys.file
 	b.WriteString(footerBar(m.w, status, info, [][2]string{
-		{"n/p", "change"}, {"h·l", "◀ apply ▶"}, {"a", "all"}, {"x", "reset"},
-		{"u", "undo"}, {"s", "save"}, {"e", "edit"}, {"/", "search"}, {"?", "help"}, {"q", "quit"},
+		{hint(fk, "next", "prev"), "change"}, {fk.first("apply-left") + "·" + fk.first("apply-right"), "◀ apply ▶"},
+		{fk.first("apply-all"), "all"}, {fk.first("reset"), "reset"}, {fk.first("undo"), "undo"}, {fk.first("save"), "save"},
+		{fk.first("edit-right"), "edit"}, {fk.first("search"), "search"}, {keys.global.first("help"), "help"}, {fk.first("quit"), "quit"},
 	}))
 	return b.String()
 }

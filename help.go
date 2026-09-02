@@ -6,51 +6,67 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-type helpEntry struct{ key, desc string }
+type helpEntry struct {
+	actions []string // rendered from the current key bindings; nil = literal key
+	key     string
+	desc    string
+}
 
-var helpSections = []struct {
+type helpSection struct {
 	title   string
+	km      keymap
 	entries []helpEntry
-}{
-	{"file view", []helpEntry{
-		{"n / p", "next / previous change or applied hunk"},
-		{"l → >", "apply current chunk left → right"},
-		{"h ← <", "apply current chunk right → left"},
-		{"a", "apply ALL pending chunks (then l ▶ or h ◀)"},
-		{"v", "select lines in the chunk (j/k), then l/h applies only those"},
-		{"x / X", "reset applied hunk under cursor / all"},
-		{"u", "undo last apply, reset or apply-all"},
-		{"s", "save modified file(s)"},
-		{"e / E", "edit right / left file in $EDITOR at the current hunk"},
-		{"P", "export pending hunks as a patch (clipboard, else ./difftool.patch); in visual mode only the current hunk"},
-		{"/ · n/N", "search, next/previous match (esc clears)"},
-		{"i", "toggle intraline highlight"},
-		{"w", "toggle line wrap"},
-		{"o", "toggle unified (one-column) view"},
-		{"z", "fold unchanged lines (click a fold to expand it)"},
-		{"J / K", "next / previous file (directory mode)"},
-		{"1 / 2 / 3", "merge mode: show LOCAL / BASE / REMOTE on the left"},
-		{"j k g G ^d ^u", "scroll, H / L horizontally"},
-		{"q · esc", "close (asks once on unsaved changes)"},
-	}},
-	{"directory view", []helpEntry{
-		{"enter · tab", "focus the diff pane (tab returns)"},
-		{"j / k", "select file; the diff pane follows"},
-		{"t", "show / hide the tree pane"},
-		{"l / h", "copy file to the other side; on a one-sided file the other direction deletes it (asks y/n)"},
-		{"A", "sync ALL listed files one way (then l ▶ or h ◀, confirm y)"},
-		{"I", "add an ignore pattern (prefilled with the selected file name)"},
-		{"u", "undo last copy"},
-		{"/", "filter list (esc clears)"},
-		{"a", "toggle identical files"},
-		{"g G ^d ^u", "move selection"},
-		{"q · esc", "quit"},
-	}},
-	{"everywhere", []helpEntry{
-		{",", "settings (theme, whitespace, blank-line / regex ignore, …); enter on a list item edits it"},
-		{"?", "this help"},
-		{"mouse", "click a file or hunk to select it, wheel scrolls the pane under the pointer"},
-	}},
+}
+
+func acts(a ...string) []string { return a }
+
+// helpSections lists every action per context; the keys shown come from the
+// active bindings so a customized layout documents itself.
+func helpSections() []helpSection {
+	return []helpSection{
+		{"file view", keys.file, []helpEntry{
+			{acts("next", "prev"), "", "next / previous change or applied hunk"},
+			{acts("apply-right"), "", "apply current chunk left → right"},
+			{acts("apply-left"), "", "apply current chunk right → left"},
+			{acts("apply-all"), "", "apply ALL pending chunks (then the ▶ or ◀ apply key)"},
+			{acts("visual"), "", "select lines in the chunk (down/up), then apply only those"},
+			{acts("reset", "reset-all"), "", "reset applied hunk under cursor / all"},
+			{acts("undo"), "", "undo last apply, reset or apply-all"},
+			{acts("save"), "", "save modified file(s)"},
+			{acts("edit-right", "edit-left"), "", "edit right / left file in $EDITOR at the current hunk"},
+			{acts("patch"), "", "export pending hunks as a patch (clipboard, else ./difftool.patch); in visual mode only the current hunk"},
+			{acts("search", "next", "search-prev"), "", "search, next / previous match (esc clears)"},
+			{acts("intraline"), "", "toggle intraline highlight"},
+			{acts("wrap"), "", "toggle line wrap"},
+			{acts("unified"), "", "toggle unified (one-column) view"},
+			{acts("fold"), "", "fold unchanged lines (click a fold to expand it)"},
+			{acts("next-file", "prev-file"), "", "next / previous file (directory mode)"},
+			{acts("merge-local", "merge-base", "merge-remote"), "", "merge mode: show LOCAL / BASE / REMOTE on the left"},
+			{acts("down", "up", "top", "bottom"), "", "scroll; half pages with the half-down / half-up keys"},
+			{acts("half-down", "half-up", "scroll-left", "scroll-right"), "", "half page down / up, scroll left / right"},
+			{acts("tree"), "", "back to the tree pane (directory mode)"},
+			{acts("quit"), "", "close (asks once on unsaved changes)"},
+		}},
+		{"directory view", keys.dir, []helpEntry{
+			{acts("open"), "", "focus the diff pane"},
+			{acts("down", "up"), "", "select file; the diff pane follows"},
+			{acts("copy-right", "copy-left"), "", "copy file to the other side; on a one-sided file the other direction deletes it (asks y/n)"},
+			{acts("sync-all"), "", "sync ALL listed files one way (then the ▶ or ◀ copy key, confirm y)"},
+			{acts("undo"), "", "undo last copy"},
+			{acts("filter"), "", "filter list (esc clears)"},
+			{acts("identical"), "", "toggle identical files"},
+			{acts("top", "bottom", "half-down", "half-up"), "", "move selection"},
+			{acts("quit"), "", "quit"},
+		}},
+		{"everywhere", keys.global, []helpEntry{
+			{acts("settings"), "", "settings (theme, whitespace, blank-line / regex ignore, …); enter on a list item edits it"},
+			{acts("help"), "", "this help (j/k scroll)"},
+			{acts("tree-toggle"), "", "show / hide the tree pane"},
+			{acts("ignore-add"), "", "add an ignore pattern (prefilled with the selected file name)"},
+			{nil, "mouse", "click a file or hunk to select it, wheel scrolls the pane under the pointer"},
+			{nil, "", "key bindings are customizable: difftool -keys prints the config snippet"},
+		}},
+	}
 }
 
 func (a *app) helpView() string {
@@ -58,11 +74,24 @@ func (a *app) helpView() string {
 		return ""
 	}
 	keySt := lipgloss.NewStyle().Foreground(lipgloss.Color(th.accent)).Bold(true)
+	secs := helpSections()
+	keyW := 12
+	for _, sec := range secs {
+		for _, e := range sec.entries {
+			if e.actions != nil {
+				e.key = keyLabel(sec.km, e.actions...)
+			}
+			keyW = max(keyW, lipgloss.Width(e.key)+2)
+		}
+	}
 	var body []string
-	for _, sec := range helpSections {
+	for _, sec := range secs {
 		body = append(body, "", "  "+styleGroup.Render(sec.title))
 		for _, e := range sec.entries {
-			body = append(body, "  "+keySt.Render(padCell(e.key, 15))+e.desc)
+			if e.actions != nil {
+				e.key = keyLabel(sec.km, e.actions...)
+			}
+			body = append(body, "  "+keySt.Render(padCell(e.key, keyW))+e.desc)
 		}
 	}
 	bodyH := max(1, a.h-2)

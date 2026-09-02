@@ -140,19 +140,19 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.updateMenu(msg)
 	}
 	if k, ok := msg.(tea.KeyMsg); ok && !a.inputActive() {
-		switch k.String() {
-		case ",":
+		switch keys.global.action(k.String()) {
+		case "settings":
 			a.menuOpen = true
 			return a, nil
-		case "?":
+		case "help":
 			a.helpOpen = true
 			return a, nil
-		case "t":
+		case "tree-toggle":
 			if a.dir != nil {
 				a.toggleTree()
 				return a, nil
 			}
-		case "I":
+		case "ignore-add":
 			// quick "ignore this": open the pattern editor prefilled with the
 			// selected file's name
 			if a.dir != nil && !a.focusDiff {
@@ -189,7 +189,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateDiff routes a message to the diff pane in dir mode.
 func (a *app) updateDiff(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyMsg); ok && k.String() == "tab" && !a.file.searchInput {
+	if k, ok := msg.(tea.KeyMsg); ok && keys.file.action(k.String()) == "tree" && !a.file.searchInput && !a.file.visual {
 		a.focusDiff = false
 		a.dir.refreshSelected()
 		return a, nil
@@ -206,8 +206,8 @@ func (a *app) updateDiff(msg tea.Msg) (tea.Model, tea.Cmd) {
 // the new file in the diff pane unless the current one has unsaved changes.
 func (a *app) updateTree(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok && !a.dir.filterInput {
-		switch k.String() {
-		case "enter", "tab":
+		switch keys.dir.action(k.String()) {
+		case "open":
 			if a.file == nil {
 				a.openSelected()
 			}
@@ -217,7 +217,7 @@ func (a *app) updateTree(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.dir.status = a.note
 			}
 			return a, nil
-		case "h", "l", "left", "right", "<", ">", "u":
+		case "copy-left", "copy-right", "undo":
 			if a.fileDirty() {
 				a.dir.status = a.unsavedStatus()
 				return a, nil
@@ -353,6 +353,7 @@ func main() {
 	gitMode := flag.Bool("git", false, "compare working tree against a git ref (default HEAD)")
 	mergeMode := flag.Bool("merge", false, "3-way merge: -merge LOCAL BASE REMOTE MERGED (git mergetool)")
 	exclude := flag.String("x", "", "additional ignore patterns, comma-separated globs")
+	showKeys := flag.Bool("keys", false, "print the key bindings as config.json snippet and exit")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: difftool [-theme name] <left> <right>  (two files or two directories)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git [ref] [path]  (working tree vs. git ref)")
@@ -361,6 +362,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "themes: %s\n", themeNames())
 	}
 	flag.Parse()
+	if *showKeys {
+		fmt.Println(keysJSON())
+		return
+	}
+	for _, w := range keyWarnings {
+		fmt.Fprintln(os.Stderr, "difftool: config:", w)
+	}
 	t, ok := themes[*themeName]
 	if !ok {
 		fatal(fmt.Errorf("unknown theme %q (themes: %s)", *themeName, themeNames()))

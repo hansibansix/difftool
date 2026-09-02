@@ -118,6 +118,27 @@ relative path. `-x 'pat,pat'` adds patterns for
 one run; the settings menu toggles all patterns on/off, and `enter` on that
 entry opens an editor to add (`a`) and delete (`d`) patterns.
 
+## Key bindings
+
+Every key in the tables above can be rebound in `config.json` under `keys`,
+per context (`file`, `dir`, `global`) and action. Only the actions you list
+change; the rest keep their defaults. `difftool -keys` prints the complete
+current map as a snippet to start from, and the help overlay and footer
+hints always show the active bindings.
+
+```json
+"keys": {
+  "file": { "apply-right": ["l", "right"], "apply-left": ["h", "left"], "save": ["ctrl+s"] },
+  "dir":  { "quit": ["q"] },
+  "global": { "settings": ["ctrl+,"] }
+}
+```
+
+Key names are bubbletea's: letters as typed, `ctrl+x`, `enter`, `esc`,
+`tab`, `up`/`down`/`left`/`right`, `f1`…`f12`, `" "` for space (all lowercase). `ctrl+c` always quits
+and `esc` always cancels an input. Unknown actions are reported on stderr at
+startup.
+
 ## Themes
 
 `rose-pine` (default), `catppuccin` (mocha), `nord`, `dracula`, `darcula`

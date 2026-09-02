@@ -508,11 +508,15 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 			}
 			return nil
 		}
+		act := keys.dir.action(msg.String())
+		if msg.String() == "ctrl+c" {
+			act = "quit"
+		}
 		if d.syncStep == 1 {
-			switch msg.String() {
-			case "l", "right", ">":
+			switch act {
+			case "copy-right":
 				d.askSync(true)
-			case "h", "left", "<":
+			case "copy-left":
 				d.askSync(false)
 			default:
 				d.syncStep = 0
@@ -544,44 +548,42 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		d.status = ""
-		switch msg.String() {
-		case "/":
+		switch act {
+		case "filter":
 			d.filterInput = true
 			d.filter = ""
 			d.rebuildList()
-		case "q", "ctrl+c":
-			return tea.Quit
-		case "esc":
-			if d.filter != "" {
+		case "quit":
+			if msg.String() == "esc" && d.filter != "" {
 				d.filter = ""
 				d.rebuildList()
 				return nil
 			}
 			return tea.Quit
-		case "j", "down":
+		case "down":
 			d.move(1)
-		case "k", "up":
+		case "up":
 			d.move(-1)
-		case "ctrl+d":
+		case "half-down":
 			d.move(d.bodyH() / 2)
-		case "ctrl+u":
+		case "half-up":
 			d.move(-d.bodyH() / 2)
-		case "g":
+		case "top":
 			d.move(-len(d.rows))
-		case "G":
+		case "bottom":
 			d.move(len(d.rows))
-		case "a":
+		case "identical":
 			cfg.ShowIdentical = !cfg.ShowIdentical
 			d.rebuildList()
-		case "l", "right", ">":
+		case "copy-right":
 			d.copyEntry(true)
-		case "h", "left", "<":
+		case "copy-left":
 			d.copyEntry(false)
-		case "u":
+		case "undo":
 			d.undoCopy()
-		case "A":
+		case "sync-all":
 			d.syncStep = 1
-			d.status = "sync all listed files: l ▶ · h ◀ · esc cancel"
+			d.status = fmt.Sprintf("sync all listed files: %s ▶ · %s ◀ · other key cancels", keys.dir.first("copy-right"), keys.dir.first("copy-left"))
 		}
 	}
 	return nil
@@ -672,9 +674,10 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 	if d.filterInput {
 		status = "/" + d.filter + "▏"
 	}
+	dk := keys.dir
 	b.WriteString(footerBar(d.w, status, info, [][2]string{
-		{"tab", "diff"}, {"h·l", "◀ copy ▶"}, {"/", "filter"},
-		{"a", "show all"}, {"?", "help"}, {"q", "quit"},
+		{dk.first("open"), "diff"}, {dk.first("copy-left") + "·" + dk.first("copy-right"), "◀ copy ▶"}, {dk.first("filter"), "filter"},
+		{dk.first("identical"), "show all"}, {keys.global.first("help"), "help"}, {dk.first("quit"), "quit"},
 	}))
 	return b.String()
 }

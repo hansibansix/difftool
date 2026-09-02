@@ -28,7 +28,12 @@ type config struct {
 	Unified        bool     `json:"unified"`
 	IgnoreBlank    bool     `json:"ignore_blank_lines"`
 	IgnoreRegex    string   `json:"ignore_regex"`
+	// overrides per context ("file", "dir", "global") and action; see keys.go
+	Keys map[string]map[string][]string `json:"keys,omitempty"`
 }
+
+// keyWarnings collects unknown key contexts/actions found in the config.
+var keyWarnings []string
 
 // ignoreRe returns the compiled IgnoreRegex (nil when empty or invalid; the
 // settings menu reports invalid patterns), recompiling only on change.
@@ -87,6 +92,7 @@ func loadConfigFrom(path string) {
 		return
 	}
 	json.Unmarshal(data, &cfg)
+	keyWarnings = applyKeys(cfg.Keys)
 	if _, ok := themes[cfg.Theme]; !ok {
 		cfg.Theme = defaultConfig().Theme
 	}
