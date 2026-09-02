@@ -28,15 +28,49 @@ func gitRaw(dir string, args ...string) ([]byte, error) {
 
 // runGitMode builds and runs the git comparison, cleaning up the temp dir.
 func runGitMode(ref, cwd, pathspec string) {
-	d, tmp, err := newGitDirModel(ref, cwd, pathspec)
+	a, tmp, err := newGitApp(ref, cwd, pathspec)
 	if err != nil {
 		fatal(err)
 	}
-	err = runProgram(&app{dir: d})
+	err = runProgram(a)
 	os.RemoveAll(tmp)
 	if err != nil {
 		fatal(err)
 	}
+}
+
+// newGitApp builds the git-mode app and returns the temp dir holding the
+// ref-side blobs for the caller to remove. A pathspec naming a single file
+// opens the file view directly: a tree pane listing exactly that one file
+// costs a third of the width and adds a focus step for nothing. Anything
+// that keeps the file view from opening (binary, deleted) falls back to the
+// tree, which explains the situation instead of showing an empty pane.
+func newGitApp(ref, cwd, pathspec string) (*app, string, error) {
+	d, tmp, err := newGitDirModel(ref, cwd, pathspec)
+	if err != nil {
+		return nil, "", err
+	}
+	a := &app{dir: d}
+	if len(d.entries) == 1 && pathspecIsFile(cwd, pathspec) {
+		a.openSelected()
+		if a.file != nil {
+			a.dir = nil
+		}
+	}
+	return a, tmp, nil
+}
+
+// pathspecIsFile reports whether pathspec names an existing regular file.
+// A pathspec that is missing (a deleted file) or a directory keeps the tree.
+func pathspecIsFile(cwd, pathspec string) bool {
+	if pathspec == "" {
+		return false
+	}
+	if !filepath.IsAbs(pathspec) {
+		pathspec = filepath.Join(cwd, pathspec)
+	}
+	fi, err := os.Stat(pathspec)
+	return err == nil && !fi.IsDir()
 }
 
 // resolveSymlinks expands symlinks in path so two paths naming the same file

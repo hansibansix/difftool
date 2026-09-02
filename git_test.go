@@ -98,3 +98,58 @@ func TestGitDirModelPathspecThroughSymlink(t *testing.T) {
 		t.Fatalf("pathspec scope wrong through symlink: %+v", d.entries)
 	}
 }
+
+// TestGitAppSingleFileSkipsTree: a pathspec naming one file goes straight to
+// the file view — a tree pane listing exactly that file is pure overhead.
+// Directory and whole-repo pathspecs keep the tree.
+func TestGitAppSingleFileSkipsTree(t *testing.T) {
+	repo, git := initRepo(t)
+	writeTestFile(t, filepath.Join(repo, "sub", "in.txt"), "a\n")
+	writeTestFile(t, filepath.Join(repo, "sub", "other.txt"), "a\n")
+	git("add", ".")
+	git("commit", "-q", "-m", "init")
+	writeTestFile(t, filepath.Join(repo, "sub", "in.txt"), "b\n")
+	writeTestFile(t, filepath.Join(repo, "sub", "other.txt"), "b\n")
+
+	t.Run("file pathspec", func(t *testing.T) {
+		a, tmp, err := newGitApp("HEAD", repo, filepath.Join(repo, "sub", "in.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(tmp)
+		if a.dir != nil {
+			t.Error("single-file pathspec must not build a tree pane")
+		}
+		if a.file == nil {
+			t.Fatal("single-file pathspec must open the file view")
+		}
+		if a.split() {
+			t.Error("split layout must be off without a tree")
+		}
+		if !a.file.roLeft {
+			t.Error("ref side must stay read-only in the file view")
+		}
+	})
+
+	t.Run("dir pathspec keeps the tree", func(t *testing.T) {
+		a, tmp, err := newGitApp("HEAD", repo, filepath.Join(repo, "sub"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(tmp)
+		if a.dir == nil {
+			t.Error("directory pathspec must keep the tree pane")
+		}
+	})
+
+	t.Run("no pathspec keeps the tree", func(t *testing.T) {
+		a, tmp, err := newGitApp("HEAD", repo, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(tmp)
+		if a.dir == nil {
+			t.Error("repo-wide git mode must keep the tree pane")
+		}
+	})
+}
