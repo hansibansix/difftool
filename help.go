@@ -22,6 +22,7 @@ var helpSections = []struct {
 		{"s", "save modified file(s)"},
 		{"/ · n/N", "search, next/previous match (esc clears)"},
 		{"i", "toggle intraline highlight"},
+		{"w", "toggle line wrap"},
 		{"J / K", "next / previous file (directory mode)"},
 		{"j k g G ^d ^u", "scroll, H / L horizontally"},
 		{"q · esc", "close (asks once on unsaved changes)"},

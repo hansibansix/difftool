@@ -30,6 +30,7 @@ ref — use the two-arg form to disambiguate.
 | `j` / `k`     | scroll, `ctrl+d`/`ctrl+u` half page |
 | `H` / `L`     | horizontal scroll (long lines)      |
 | `i`           | toggle intraline highlight          |
+| `w`           | toggle line wrap (persisted)        |
 | `,`           | settings menu                       |
 | `g` / `G`     | top / bottom                        |
 | `q` / `esc`   | quit (asks once on unsaved changes) |

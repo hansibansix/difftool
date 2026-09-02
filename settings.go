@@ -20,6 +20,7 @@ type config struct {
 	ShowIdentical  bool     `json:"show_identical"`
 	Syntax         bool     `json:"syntax"`
 	ShowTree       bool     `json:"show_tree"`
+	Wrap           bool     `json:"wrap"`
 	IgnorePatterns []string `json:"ignore_patterns"`
 	UseIgnores     bool     `json:"use_ignores"`
 }
@@ -155,6 +156,9 @@ func (a *app) menuItems() []menuItem {
 		}},
 		{"intraline highlight", func() string { return onOff(cfg.Intraline) }, func(int) {
 			cfg.Intraline = !cfg.Intraline
+		}},
+		{"line wrap", func() string { return onOff(cfg.Wrap) }, func(int) {
+			cfg.Wrap = !cfg.Wrap
 		}},
 		{"ignore whitespace", func() string { return onOff(cfg.IgnoreWs) }, func(int) {
 			cfg.IgnoreWs = !cfg.IgnoreWs

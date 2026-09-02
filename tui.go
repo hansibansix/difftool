@@ -513,6 +513,10 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		case "i":
 			cfg.Intraline = !cfg.Intraline
 			m.status = "intraline highlight " + onOff(cfg.Intraline)
+		case "w":
+			cfg.Wrap = !cfg.Wrap
+			saveConfig()
+			m.status = "line wrap " + onOff(cfg.Wrap)
 		case "H":
 			m.scrollH(-8)
 		case "L":
@@ -586,10 +590,13 @@ func (m *model) view(focused bool) string {
 		curCi, curAi = m.nav[m.cur].ci, m.nav[m.cur].ai
 	}
 	pad := strings.Repeat(" ", max(0, m.w-1-(2+2*paneW)))
-	for i := m.top; i < m.top+m.bodyH(); i++ {
-		sb := m.scrollbar(i - m.top)
+	textW := max(1, paneW-gutW-2)
+	lines := 0
+	for i := m.top; lines < m.bodyH(); i++ {
+		sb := m.scrollbar(lines)
 		if i >= len(m.rows) {
 			b.WriteString(strings.Repeat(" ", max(0, m.w-1)) + sb + "\n")
+			lines++
 			continue
 		}
 		r := m.rows[i]
@@ -615,17 +622,31 @@ func (m *model) view(focused bool) string {
 			r.l >= 0 && r.r >= 0 && cfg.Intraline {
 			sa, sb2 = changedSpans([]rune(expandTabs(m.left[r.l])), []rune(expandTabs(m.right[r.r])))
 		}
-		b.WriteString(mark +
-			m.renderSide(r, true, paneW, gutW, isCur, sa) +
-			sep +
-			m.renderSide(r, false, paneW, gutW, isCur, sb2) + pad + sb + "\n")
+		pieces := 1
+		if cfg.Wrap {
+			pieces = max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
+		}
+		for k := 0; k < pieces && lines < m.bodyH(); k++ {
+			if k > 0 { // continuation lines keep the chunk marker, not the match marker
+				mark = " "
+				if isCur {
+					mark = styleMark.Render("▌")
+				}
+				sb = m.scrollbar(lines)
+			}
+			b.WriteString(mark +
+				m.renderSide(r, true, paneW, gutW, isCur, sa, k) +
+				sep +
+				m.renderSide(r, false, paneW, gutW, isCur, sb2, k) + pad + sb + "\n")
+			lines++
+		}
 	}
 
 	info := ""
 	if len(m.nav) > 0 {
 		info = fmt.Sprintf("change %d/%d", m.cur+1, len(m.nav))
 	}
-	if m.hOff > 0 {
+	if m.hOff > 0 && !cfg.Wrap {
 		if info != "" {
 			info += " · "
 		}
@@ -690,9 +711,18 @@ func (m *model) scrollbar(bi int) string {
 	return st.Render(" ")
 }
 
+// wrapCount is the number of screen lines a wrapped line needs (1 for none).
+func (m *model) wrapCount(idx int, lines []string, textW int) int {
+	if idx < 0 {
+		return 1
+	}
+	return max(1, (runewidth.StringWidth(expandTabs(lines[idx]))+textW-1)/textW)
+}
+
 // renderSide draws one side of a row; spans are the intraline changes of
-// this side (computed once per row by the caller).
-func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans []span) string {
+// this side (computed once per row by the caller). piece selects the
+// screen line of a wrapped row (0 = first).
+func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans []span, piece int) string {
 	textW := max(1, paneW-gutW-2)
 	idx := r.r
 	lines := m.right
@@ -749,7 +779,14 @@ func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans 
 		fgs = m.rightFgs[idx]
 	}
 	gut := gutSt.Render(fmt.Sprintf("%*d ", gutW, idx+1))
-	return gut + clipAndStyle(txt, spans, fgs, m.hOff, textW, base, emph) + " "
+	off, marks := m.hOff, true
+	if cfg.Wrap {
+		off, marks = piece*textW, false
+	}
+	if piece > 0 {
+		gut = strings.Repeat(" ", gutW+1)
+	}
+	return gut + clipAndStyle(txt, spans, fgs, off, textW, marks, base, emph) + " "
 }
 
 func expandAll(lines []string) []string {
@@ -767,13 +804,13 @@ func expandTabs(s string) string {
 // clipAndStyle renders s from display column off into exactly width w,
 // styling runes inside spans with emph and the rest with base; clipped
 // edges show a dim "…".
-func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, base, emph lipgloss.Style) string {
+func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, marks bool, base, emph lipgloss.Style) string {
 	runes := []rune(s)
 	total := runewidth.StringWidth(s)
 	if off > 0 && off >= total {
 		return base.Render(strings.Repeat(" ", w))
 	}
-	leftClip := off > 0
+	leftClip := marks && off > 0
 	startCol := off
 	used := 0
 	if leftClip {
@@ -818,6 +855,7 @@ func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, base, emph l
 		used += rw
 		col += rw
 	}
+	clippedR = clippedR && marks
 	if clippedR {
 		for used > w-1 && len(vis) > 0 {
 			used -= runewidth.RuneWidth(vis[len(vis)-1].r)
@@ -898,7 +936,13 @@ func displayPath(p string) string {
 
 const maxHOff = 4000
 
-func (m *model) scrollH(delta int) { m.hOff = clamp(m.hOff+delta, 0, maxHOff) }
+func (m *model) scrollH(delta int) {
+	if cfg.Wrap {
+		m.status = "line wrap is on — nothing to scroll (w toggles)"
+		return
+	}
+	m.hOff = clamp(m.hOff+delta, 0, maxHOff)
+}
 
 // editText applies a key to a one-line text input: backspace drops the last
 // rune, printable runes and space are appended.
