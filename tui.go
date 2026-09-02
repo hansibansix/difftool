@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -622,6 +623,15 @@ func (m *model) view(focused bool) string {
 			r.l >= 0 && r.r >= 0 && cfg.Intraline {
 			sa, sb2 = changedSpans([]rune(expandTabs(m.left[r.l])), []rune(expandTabs(m.right[r.r])))
 		}
+		var hlL, hlR []span
+		if m.search != "" {
+			if r.l >= 0 {
+				hlL = searchSpans(expandTabs(m.left[r.l]), m.search)
+			}
+			if r.r >= 0 {
+				hlR = searchSpans(expandTabs(m.right[r.r]), m.search)
+			}
+		}
 		pieces := 1
 		if cfg.Wrap {
 			pieces = max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
@@ -635,9 +645,9 @@ func (m *model) view(focused bool) string {
 				sb = m.scrollbar(lines)
 			}
 			b.WriteString(mark +
-				m.renderSide(r, true, paneW, gutW, isCur, sa, k) +
+				m.renderSide(r, true, paneW, gutW, isCur, sa, hlL, k) +
 				sep +
-				m.renderSide(r, false, paneW, gutW, isCur, sb2, k) + pad + sb + "\n")
+				m.renderSide(r, false, paneW, gutW, isCur, sb2, hlR, k) + pad + sb + "\n")
 			lines++
 		}
 	}
@@ -722,7 +732,7 @@ func (m *model) wrapCount(idx int, lines []string, textW int) int {
 // renderSide draws one side of a row; spans are the intraline changes of
 // this side (computed once per row by the caller). piece selects the
 // screen line of a wrapped row (0 = first).
-func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans []span, piece int) string {
+func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans, hl []span, piece int) string {
 	textW := max(1, paneW-gutW-2)
 	idx := r.r
 	lines := m.right
@@ -786,7 +796,26 @@ func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans 
 	if piece > 0 {
 		gut = strings.Repeat(" ", gutW+1)
 	}
-	return gut + clipAndStyle(txt, spans, fgs, off, textW, marks, base, emph) + " "
+	return gut + clipAndStyle(txt, spans, fgs, hl, off, textW, marks, base, emph) + " "
+}
+
+// searchSpans returns the rune ranges of s that match q case-insensitively.
+func searchSpans(s, q string) []span {
+	ls, lq := strings.ToLower(s), strings.ToLower(q)
+	if lq == "" || utf8.RuneCountInString(ls) != utf8.RuneCountInString(s) {
+		return nil
+	}
+	var out []span
+	qr := utf8.RuneCountInString(lq)
+	for from := 0; ; {
+		i := strings.Index(ls[from:], lq)
+		if i < 0 {
+			return out
+		}
+		start := utf8.RuneCountInString(ls[:from+i])
+		out = append(out, span{start, start + qr})
+		from += i + len(lq)
+	}
 }
 
 func expandAll(lines []string) []string {
@@ -804,7 +833,7 @@ func expandTabs(s string) string {
 // clipAndStyle renders s from display column off into exactly width w,
 // styling runes inside spans with emph and the rest with base; clipped
 // edges show a dim "…".
-func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, marks bool, base, emph lipgloss.Style) string {
+func clipAndStyle(s string, spans []span, fgs []fgSpan, hl []span, off, w int, marks bool, base, emph lipgloss.Style) string {
 	runes := []rune(s)
 	total := runewidth.StringWidth(s)
 	if off > 0 && off >= total {
@@ -817,8 +846,8 @@ func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, marks bool, 
 		startCol++
 		used = 1
 	}
-	inSpan := func(i int) bool {
-		for _, sp := range spans {
+	inSpans := func(sps []span, i int) bool {
+		for _, sp := range sps {
 			if i >= sp.a && i < sp.b {
 				return true
 			}
@@ -836,6 +865,7 @@ func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, marks bool, 
 	type cell struct {
 		r    rune
 		emph bool
+		hl   bool
 		fg   string
 	}
 	var vis []cell
@@ -851,7 +881,7 @@ func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, marks bool, 
 			clippedR = true
 			break
 		}
-		vis = append(vis, cell{rn, inSpan(i), fgAt(i)})
+		vis = append(vis, cell{rn, inSpans(spans, i), inSpans(hl, i), fgAt(i)})
 		used += rw
 		col += rw
 	}
@@ -867,26 +897,29 @@ func clipAndStyle(s string, spans []span, fgs []fgSpan, off, w int, marks bool, 
 		b.WriteString(styleGutter.Render("…"))
 	}
 	var seg []rune
-	segEmph := false
+	segEmph, segHl := false, false
 	segFg := ""
 	flush := func() {
 		if len(seg) == 0 {
 			return
 		}
 		st := base
-		if segEmph {
+		switch {
+		case segHl:
+			st = styleSearch
+		case segEmph:
 			st = emph
 		}
-		if segFg != "" {
+		if segFg != "" && !segHl {
 			st = st.Foreground(lipgloss.Color(segFg))
 		}
 		b.WriteString(st.Render(string(seg)))
 		seg = seg[:0]
 	}
 	for _, cl := range vis {
-		if cl.emph != segEmph || cl.fg != segFg {
+		if cl.emph != segEmph || cl.fg != segFg || cl.hl != segHl {
 			flush()
-			segEmph, segFg = cl.emph, cl.fg
+			segEmph, segFg, segHl = cl.emph, cl.fg, cl.hl
 		}
 		seg = append(seg, cl.r)
 	}

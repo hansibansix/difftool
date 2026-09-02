@@ -30,26 +30,26 @@ func TestChangedSpans(t *testing.T) {
 
 func TestClipAndStyle(t *testing.T) {
 	z := lipgloss.NewStyle()
-	if got := clipAndStyle("hello", nil, nil, 0, 8, true, z, z); got != "hello   " {
+	if got := clipAndStyle("hello", nil, nil, nil, 0, 8, true, z, z); got != "hello   " {
 		t.Fatalf("pad: %q", got)
 	}
-	if got := clipAndStyle("hello world", nil, nil, 0, 5, true, z, z); got != "hell…" {
+	if got := clipAndStyle("hello world", nil, nil, nil, 0, 5, true, z, z); got != "hell…" {
 		t.Fatalf("right clip: %q", got)
 	}
-	if got := clipAndStyle("hello world", nil, nil, 6, 5, true, z, z); got != "…orld" {
+	if got := clipAndStyle("hello world", nil, nil, nil, 6, 5, true, z, z); got != "…orld" {
 		t.Fatalf("left clip: %q", got)
 	}
-	if got := clipAndStyle("hi", nil, nil, 10, 4, true, z, z); got != "    " {
+	if got := clipAndStyle("hi", nil, nil, nil, 10, 4, true, z, z); got != "    " {
 		t.Fatalf("past content: %q", got)
 	}
-	if got := clipAndStyle("hello world!!", nil, nil, 3, 6, true, z, z); got != "…o wo…" {
+	if got := clipAndStyle("hello world!!", nil, nil, nil, 3, 6, true, z, z); got != "…o wo…" {
 		t.Fatalf("both clipped: %q", got)
 	}
 	// wrap mode: plain window, no clip markers
-	if got := clipAndStyle("hello world!!", nil, nil, 6, 5, false, z, z); got != "world" {
+	if got := clipAndStyle("hello world!!", nil, nil, nil, 6, 5, false, z, z); got != "world" {
 		t.Fatalf("wrap piece: %q", got)
 	}
-	if got := clipAndStyle("hello world!!", nil, nil, 11, 5, false, z, z); got != "!!   " {
+	if got := clipAndStyle("hello world!!", nil, nil, nil, 11, 5, false, z, z); got != "!!   " {
 		t.Fatalf("wrap tail: %q", got)
 	}
 }
@@ -175,5 +175,21 @@ func TestGitDirModelPathspec(t *testing.T) {
 	// path outside the repo must error
 	if _, _, err := newGitDirModel("HEAD", repo, t.TempDir()); err == nil {
 		t.Fatal("outside path must be rejected")
+	}
+}
+
+func TestSearchSpans(t *testing.T) {
+	got := searchSpans("Foo bar foo", "foo")
+	want := []span{{0, 3}, {8, 11}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	if searchSpans("abc", "") != nil || searchSpans("abc", "zz") != nil {
+		t.Fatal("no matches must give nil")
+	}
+	// rune indices, not bytes
+	got = searchSpans("äöü xy", "xy")
+	if !reflect.DeepEqual(got, []span{{4, 6}}) {
+		t.Fatalf("rune offsets: %v", got)
 	}
 }
