@@ -55,7 +55,7 @@ func newMergeModel(local, base, remote, merged string) (*model, error) {
 	}
 	m.setSide(0)
 	m.recompute()
-	m.status = fmt.Sprintf("%d conflicts · apply hunks onto the marker blocks to resolve", m.conflicts())
+	m.status = "apply hunks onto the marker blocks to resolve · 1/2/3 switch the left side"
 	return m, nil
 }
 
