@@ -215,11 +215,17 @@ func footerBar(w int, status, info string, keys [][2]string) string {
 	if info != "" {
 		line += styleFooterText.Render(info) + dot
 	}
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, styleFooterKey.Render(k[0])+styleFooterText.Render(" "+k[1]))
+	gap := styleFooterText.Render("  ")
+	for i, k := range keys {
+		hint := styleFooterKey.Render(k[0]) + styleFooterText.Render(" "+k[1])
+		if i > 0 {
+			hint = gap + hint
+		}
+		if lipgloss.Width(line)+lipgloss.Width(hint) > w {
+			break // whole hints only; the full list lives in the help overlay
+		}
+		line += hint
 	}
-	line += strings.Join(parts, styleFooterText.Render("  "))
 	// clip: the bar must never exceed its pane, or side-by-side layout breaks
 	return barPad(ansi.Truncate(line, w, ""), w)
 }

@@ -466,12 +466,12 @@ func (d *dirModel) view() string {
 		}
 		return p
 	}
-	lh, rh := d.leftRoot, d.rightRoot
+	lh, rh := displayPath(d.leftRoot), displayPath(d.rightRoot)
 	if d.leftLabel != "" {
 		lh = d.leftLabel
 	}
 	if d.rightLabel != "" {
-		rh = d.rightLabel
+		rh = displayPath(d.rightLabel)
 	}
 	sideW := max(4, (d.w-5)/2)
 	focus := styleBar.Render(" ")
@@ -484,7 +484,7 @@ func (d *dirModel) view() string {
 
 	for i := d.top; i < d.top+d.bodyH(); i++ {
 		if i >= len(d.rows) {
-			b.WriteString(styleGutter.Render("~") + "\n")
+			b.WriteString("\n")
 			continue
 		}
 		r := d.rows[i]
@@ -505,6 +505,9 @@ func (d *dirModel) view() string {
 			glyphSt, labelSt = glyphSt.Background(bg), labelSt.Background(bg)
 			nameSt, pad = styleSelected, styleSelected
 			mark = styleMark.Render("▌")
+			if !d.focused {
+				mark = styleGutter.Render("▌")
+			}
 		}
 		nameW := max(4, d.w-4-2-runewidth.StringWidth(label)-3)
 		name := runewidth.Truncate(filepath.Base(e.rel), nameW, "…")

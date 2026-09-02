@@ -248,6 +248,8 @@ func (a *app) openSelected() {
 	}
 	m.embedded = true
 	m.roLeft = a.dir.roLeft
+	m.leftName = filepath.Join(filepath.Base(a.dir.leftRoot), e.rel)
+	m.rightName = filepath.Join(filepath.Base(a.dir.rightRoot), e.rel)
 	if a.dir.leftLabel != "" {
 		m.leftName = a.dir.leftLabel + ":" + e.rel
 	}

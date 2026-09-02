@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/chroma/v2/styles"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestApplyAll(t *testing.T) {
@@ -121,5 +122,33 @@ func TestHighlightLines(t *testing.T) {
 	cfg.Syntax = false
 	if highlightLines("x.php", []string{"<?php"}) != nil {
 		t.Fatal("Syntax=false must disable highlighting")
+	}
+}
+
+func TestDisplayPath(t *testing.T) {
+	t.Setenv("HOME", "/home/tester")
+	if got := displayPath("/home/tester/work/x.php"); got != "~/work/x.php" {
+		t.Fatalf("got %q", got)
+	}
+	if got := displayPath("/srv/x.php"); got != "/srv/x.php" {
+		t.Fatalf("got %q", got)
+	}
+	if got := displayPath("/home/testerx/y"); got != "/home/testerx/y" {
+		t.Fatalf("prefix must match a path component: %q", got)
+	}
+}
+
+func TestFooterBarFitsWidth(t *testing.T) {
+	keys := [][2]string{{"n/p", "change"}, {"h·l", "◀ apply ▶"}, {"a", "all"}, {"q", "quit"}}
+	for _, w := range []int{10, 20, 35, 80} {
+		got := footerBar(w, "", "info", keys)
+		if lipgloss.Width(got) != w {
+			t.Fatalf("w=%d: rendered width %d", w, lipgloss.Width(got))
+		}
+	}
+	// a partially fitting hint is dropped, not cut mid-word
+	got := footerBar(22, "", "", keys)
+	if !strings.Contains(got, "n/p") || strings.Contains(got, "h·l ◀ app") && !strings.Contains(got, "apply ▶") {
+		t.Fatalf("hint was cut: %q", got)
 	}
 }

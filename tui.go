@@ -601,9 +601,9 @@ func (m *model) View() string {
 		focus = styleDirty.Render("▌")
 	}
 	head := focus +
-		pathCell(m.leftName, paneW, m.dirtyL) +
+		pathCell(displayPath(m.leftName), paneW, m.dirtyL) +
 		styleHeaderSep.Render("│") +
-		pathCell(m.rightName, paneW, m.dirtyR)
+		pathCell(displayPath(m.rightName), paneW, m.dirtyR)
 	b.WriteString(barPad(head, m.w) + "\n")
 
 	curCi, curAi := -1, -1
@@ -614,8 +614,7 @@ func (m *model) View() string {
 	for i := m.top; i < m.top+m.bodyH(); i++ {
 		sb := m.scrollbar(i - m.top)
 		if i >= len(m.rows) {
-			b.WriteString(styleGutter.Render("~") +
-				strings.Repeat(" ", max(0, m.w-2)) + sb + "\n")
+			b.WriteString(strings.Repeat(" ", max(0, m.w-1)) + sb + "\n")
 			continue
 		}
 		r := m.rows[i]
@@ -907,6 +906,14 @@ func pathCell(p string, w int, dirty bool) string {
 		s += styleBar.Render(" ") + styleDirty.Render("*")
 	}
 	return s + styleBar.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(s))))
+}
+
+// displayPath shortens the home directory to ~ for display.
+func displayPath(p string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(p, home+"/") {
+		return "~" + p[len(home):]
+	}
+	return p
 }
 
 func clamp(v, lo, hi int) int {
