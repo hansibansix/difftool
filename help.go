@@ -35,6 +35,7 @@ var helpSections = []struct {
 		{"t", "show / hide the tree pane"},
 		{"l / h", "copy file to the other side; on a one-sided file the other direction deletes it (asks y/n)"},
 		{"A", "sync ALL listed files one way (then l ▶ or h ◀, confirm y)"},
+		{"I", "add an ignore pattern (prefilled with the selected file name)"},
 		{"u", "undo last copy"},
 		{"/", "filter list (esc clears)"},
 		{"a", "toggle identical files"},
@@ -42,7 +43,7 @@ var helpSections = []struct {
 		{"q · esc", "quit"},
 	}},
 	{"everywhere", []helpEntry{
-		{",", "settings (theme, whitespace, ignores, …)"},
+		{",", "settings (theme, whitespace, …); enter on ignore patterns edits the list"},
 		{"?", "this help"},
 		{"mouse", "click a file or hunk to select it, wheel scrolls the pane under the pointer"},
 	}},

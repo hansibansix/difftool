@@ -36,6 +36,11 @@ type app struct {
 	menuOpen bool
 	menuSel  int
 	helpOpen bool
+
+	// ignore pattern editor inside the settings menu
+	ignEdit, ignInput bool
+	ignSel            int
+	ignText           string
 }
 
 func (a *app) Init() tea.Cmd { return nil }
@@ -124,6 +129,17 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			if a.dir != nil {
 				a.toggleTree()
+				return a, nil
+			}
+		case "I":
+			// quick "ignore this": open the pattern editor prefilled with the
+			// selected file's name
+			if a.dir != nil && !a.focusDiff {
+				a.menuOpen, a.ignEdit, a.ignInput = true, true, true
+				a.ignText = ""
+				if e := a.dir.selected(); e != nil {
+					a.ignText = filepath.Base(e.rel)
+				}
 				return a, nil
 			}
 		}

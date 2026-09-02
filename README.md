@@ -68,6 +68,7 @@ alternate full-screen instead). `.git` is skipped.
 | `/`         | filter the list (esc clears)             |
 | `l` / `h`   | copy selected file to the other side; for a one-sided file the other direction deletes it (asks `y`) |
 | `A`         | sync ALL listed files (`l`/`h`, then `y`)  |
+| `I`         | add an ignore pattern (prefilled with the file name) |
 | `u`         | undo the last copy / delete / sync       |
 | `a`         | toggle showing identical files           |
 | `j` / `k`   | move selection                           |
@@ -100,7 +101,8 @@ patterns in `ignore_patterns` (defaults: `node_modules`, `vendor`, VCS/IDE
 metadata, `__pycache__`, minified assets, swap/OS junk); matching folders
 are pruned entirely. Patterns without `/` match the basename at any depth,
 patterns with `/` match the relative path. `-x 'pat,pat'` adds patterns for
-one run; the settings menu toggles all patterns on/off.
+one run; the settings menu toggles all patterns on/off, and `enter` on that
+entry opens an editor to add (`a`) and delete (`d`) patterns.
 
 ## Themes
 

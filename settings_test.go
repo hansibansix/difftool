@@ -147,3 +147,24 @@ func TestScanHonorsIgnores(t *testing.T) {
 		t.Fatalf("ignored files must not be scanned: %+v", d.entries)
 	}
 }
+
+func TestIgnoreEditor(t *testing.T) {
+	orig := cfg
+	defer func() { cfg = orig }()
+	cfg.IgnorePatterns = []string{"node_modules"}
+	a := &app{}
+	a.addIgnore("  *.log ")
+	a.addIgnore("*.log") // duplicate ignored
+	a.addIgnore("   ")   // empty ignored
+	if !reflect.DeepEqual(cfg.IgnorePatterns, []string{"node_modules", "*.log"}) || a.ignSel != 1 {
+		t.Fatalf("add: %v sel=%d", cfg.IgnorePatterns, a.ignSel)
+	}
+	a.removeIgnore(0)
+	if !reflect.DeepEqual(cfg.IgnorePatterns, []string{"*.log"}) || a.ignSel != 0 {
+		t.Fatalf("remove: %v sel=%d", cfg.IgnorePatterns, a.ignSel)
+	}
+	a.removeIgnore(5) // out of range: no-op
+	if len(cfg.IgnorePatterns) != 1 {
+		t.Fatal("out-of-range remove must be a no-op")
+	}
+}
