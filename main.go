@@ -139,7 +139,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		wasDirty := a.fileDirty()
 		cmd := a.file.update(msg)
 		if wasDirty && !a.fileDirty() {
-			a.dir.refreshSelected() // saved: update the tree status
+			a.dir.refreshSelected() // saved (or undone to the saved state): re-read the status
 		}
 		return a, cmd
 	}
@@ -205,18 +205,22 @@ func (a *app) View() string {
 	if a.dir == nil {
 		return a.file.view(false)
 	}
+	dirtyRel := ""
+	if a.fileDirty() {
+		dirtyRel = a.openedRel
+	}
 	if !a.split() {
 		if a.focusDiff && a.file != nil {
 			return a.file.view(true)
 		}
-		return a.dir.view(true)
+		return a.dir.view(true, dirtyRel)
 	}
 	right := a.placeholder()
 	if a.file != nil {
 		right = a.file.view(a.focusDiff)
 	}
 	sep := strings.TrimSuffix(strings.Repeat(styleSep.Render("│")+"\n", a.h), "\n")
-	return lipgloss.JoinHorizontal(lipgloss.Top, a.dir.view(!a.focusDiff), sep, right)
+	return lipgloss.JoinHorizontal(lipgloss.Top, a.dir.view(!a.focusDiff, dirtyRel), sep, right)
 }
 
 // placeholder fills the diff pane when no file is shown.

@@ -113,7 +113,7 @@ func TestApplyLeftRefusedWhenReadOnly(t *testing.T) {
 	m := testModel([]string{"a"}, []string{"b"})
 	m.roLeft = true
 	m.apply(false)
-	if m.dirtyL || len(m.applied) != 0 || m.left[0] != "a" {
+	if m.dirty() || len(m.applied) != 0 || m.left[0] != "a" {
 		t.Fatal("apply into read-only left side must be refused")
 	}
 }

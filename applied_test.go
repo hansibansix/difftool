@@ -1,12 +1,14 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
 
 func testModel(left, right []string) *model {
-	m := &model{left: left, right: right, leftNL: true, rightNL: true, w: 80, h: 5}
+	m := &model{left: left, right: right, savedL: left, savedR: right, leftNL: true, rightNL: true, w: 80, h: 5}
 	m.recompute()
 	return m
 }
@@ -155,7 +157,37 @@ func TestResetApplied(t *testing.T) {
 func TestResetRefusedOnPendingChange(t *testing.T) {
 	m := testModel([]string{"a"}, []string{"b"})
 	m.resetApplied()
-	if m.status != "not on an applied chunk" || m.dirtyL || m.dirtyR {
+	if m.status != "not on an applied chunk" || m.dirty() {
 		t.Fatalf("reset on pending change must be refused: %q", m.status)
+	}
+}
+
+// dirtiness is "content differs from the last save", so undoing past a save
+// makes the file dirty again instead of trusting stale flags
+func TestDirtyAfterUndoPastSave(t *testing.T) {
+	dir := t.TempDir()
+	lp, rp := filepath.Join(dir, "l.txt"), filepath.Join(dir, "r.txt")
+	writeTestFile(t, lp, "a\nb\n")
+	writeTestFile(t, rp, "a\nB\n")
+	m, err := newModel(lp, rp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.apply(true)
+	if !m.dirty() {
+		t.Fatal("apply must dirty the file")
+	}
+	m.save()
+	if m.dirty() {
+		t.Fatal("save must clean the file")
+	}
+	m.undoLast()
+	if !m.dirty() {
+		t.Fatal("undo past the save must dirty the file again")
+	}
+	m.save()
+	data, _ := os.ReadFile(rp)
+	if string(data) != "a\nB\n" {
+		t.Fatalf("second save must write the undone content, got %q", data)
 	}
 }

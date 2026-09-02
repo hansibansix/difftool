@@ -18,10 +18,9 @@ type row struct {
 }
 
 type snapshot struct {
-	left, right    []string
-	cur            int
-	dirtyL, dirtyR bool
-	applied        []appliedRegion
+	left, right []string
+	cur         int
+	applied     []appliedRegion
 }
 
 // appliedRegion remembers a chunk that was applied this session: both sides
@@ -54,9 +53,11 @@ type model struct {
 	hOff int // horizontal scroll column
 	w, h int
 
-	undo           []snapshot
-	applied        []appliedRegion
-	dirtyL, dirtyR bool
+	undo    []snapshot
+	applied []appliedRegion
+	// content as last read from / written to disk; a side is dirty when its
+	// slice header differs (lines are never mutated in place, only replaced)
+	savedL, savedR []string
 
 	leftFgs, rightFgs [][]fgSpan // syntax highlighting, per line
 
@@ -87,6 +88,7 @@ func newModel(leftPath, rightPath string) (*model, error) {
 		left: left, right: right,
 		leftNL: leftNL, rightNL: rightNL,
 	}
+	m.savedL, m.savedR = left, right
 	m.recompute()
 	if len(m.nav) == 0 {
 		m.status = "files are identical"
@@ -293,7 +295,6 @@ func (m *model) applyChunk(c chunk, toRight bool) {
 		}
 		orig := append([]string(nil), m.right[c.r0:c.r1]...)
 		m.right = splice(m.right, c.r0, c.r1, m.left[c.l0:c.l1])
-		m.dirtyR = true
 		m.shiftApplied(true, c.r1, (c.l1-c.l0)-(c.r1-c.r0), -1)
 		m.applied = append(m.applied, appliedRegion{c.l0, c.l1, c.r0, c.r0 + (c.l1 - c.l0), true, orig})
 		return
@@ -303,7 +304,6 @@ func (m *model) applyChunk(c chunk, toRight bool) {
 	}
 	orig := append([]string(nil), m.left[c.l0:c.l1]...)
 	m.left = splice(m.left, c.l0, c.l1, m.right[c.r0:c.r1])
-	m.dirtyL = true
 	m.shiftApplied(false, c.l1, (c.r1-c.r0)-(c.l1-c.l0), -1)
 	m.applied = append(m.applied, appliedRegion{c.l0, c.l0 + (c.r1 - c.r0), c.r0, c.r1, false, orig})
 }
@@ -327,11 +327,9 @@ func (m *model) resetRegion(ai int) {
 	a := m.applied[ai]
 	if a.toRight {
 		m.right = splice(m.right, a.r0, a.r1, a.orig)
-		m.dirtyR = true
 		m.shiftApplied(true, a.r1, len(a.orig)-(a.r1-a.r0), ai)
 	} else {
 		m.left = splice(m.left, a.l0, a.l1, a.orig)
-		m.dirtyL = true
 		m.shiftApplied(false, a.l1, len(a.orig)-(a.l1-a.l0), ai)
 	}
 	m.applied = append(m.applied[:ai], m.applied[ai+1:]...)
@@ -357,11 +355,21 @@ func (m *model) shiftApplied(right bool, from, delta, skip int) {
 }
 
 func (m *model) pushUndo() {
-	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, m.dirtyL, m.dirtyR,
-		append([]appliedRegion(nil), m.applied...)})
+	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, append([]appliedRegion(nil), m.applied...)})
 }
 
-func (m *model) dirty() bool { return m.dirtyL || m.dirtyR }
+func (m *model) leftDirty() bool  { return !sameLines(m.left, m.savedL) }
+func (m *model) rightDirty() bool { return !sameLines(m.right, m.savedR) }
+func (m *model) dirty() bool      { return m.leftDirty() || m.rightDirty() }
+
+// sameLines reports whether two line slices are the same slice (identity,
+// not content): every edit produces a fresh slice, so identity == unchanged.
+func sameLines(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return len(a) == 0 || &a[0] == &b[0]
+}
 
 func arrowOf(toRight bool) string {
 	if toRight {
@@ -391,7 +399,7 @@ func (m *model) undoLast() {
 	}
 	s := m.undo[len(m.undo)-1]
 	m.undo = m.undo[:len(m.undo)-1]
-	m.left, m.right, m.cur, m.dirtyL, m.dirtyR = s.left, s.right, s.cur, s.dirtyL, s.dirtyR
+	m.left, m.right, m.cur = s.left, s.right, s.cur
 	m.applied = s.applied
 	m.recompute()
 	m.scrollToCur()
@@ -400,20 +408,20 @@ func (m *model) undoLast() {
 
 func (m *model) save() {
 	var saved []string
-	if m.dirtyL {
+	if m.leftDirty() {
 		if err := writeLines(m.leftPath, m.left, m.leftNL); err != nil {
 			m.status = "error: " + err.Error()
 			return
 		}
-		m.dirtyL = false
+		m.savedL = m.left
 		saved = append(saved, m.leftPath)
 	}
-	if m.dirtyR {
+	if m.rightDirty() {
 		if err := writeLines(m.rightPath, m.right, m.rightNL); err != nil {
 			m.status = "error: " + err.Error()
 			return
 		}
-		m.dirtyR = false
+		m.savedR = m.right
 		saved = append(saved, m.rightPath)
 	}
 	if len(saved) == 0 {
@@ -568,9 +576,9 @@ func (m *model) view(focused bool) string {
 
 	hs := headerStyles(focused)
 	head := hs.mark(focused) +
-		pathCell(displayPath(m.leftName), paneW, m.dirtyL, hs) +
+		pathCell(displayPath(m.leftName), paneW, m.leftDirty(), hs) +
 		hs.sep.Render("│") +
-		pathCell(displayPath(m.rightName), paneW, m.dirtyR, hs)
+		pathCell(displayPath(m.rightName), paneW, m.rightDirty(), hs)
 	b.WriteString(barPadWith(head, m.w, hs.bar) + "\n")
 
 	curCi, curAi := -1, -1

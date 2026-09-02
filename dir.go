@@ -491,7 +491,9 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-func (d *dirModel) view(focused bool) string {
+// view renders the tree; dirtyRel names the entry whose diff has unsaved
+// changes so the user sees it before switching files.
+func (d *dirModel) view(focused bool, dirtyRel string) string {
 	if d.w == 0 || d.h == 0 {
 		return ""
 	}
@@ -536,10 +538,16 @@ func (d *dirModel) view(focused bool) string {
 			}
 		}
 		nameW := max(4, d.w-4-2-runewidth.StringWidth(label)-3)
+		unsaved := ""
+		if e.rel == dirtyRel {
+			unsaved = " *"
+			nameW -= 2
+		}
 		name := runewidth.Truncate(filepath.Base(e.rel), nameW, "…")
 		gap := strings.Repeat(" ", max(1, nameW-runewidth.StringWidth(name)+1))
 		b.WriteString(mark + pad.Render("   ") + st.Render(e.status.glyph()) +
-			nameSt.Render(" "+name+gap) + st.Render(label) + pad.Render(" ") + "\n")
+			nameSt.Render(" "+name) + styleMark.Render(unsaved) + nameSt.Render(gap) +
+			st.Render(label) + pad.Render(" ") + "\n")
 	}
 
 	info := d.countsInfo()
