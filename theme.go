@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -208,6 +209,24 @@ func initStyles(t theme) {
 
 // hdrStyles bundles the header bar styles for one focus state.
 type hdrStyles struct{ text, dim, sep, bar, dirty lipgloss.Style }
+
+// mark renders the focus marker slot at the start of a header bar.
+func (hs hdrStyles) mark(focused bool) string {
+	if focused {
+		return hs.text.Render("▌")
+	}
+	return hs.bar.Render(" ")
+}
+
+// sortedThemes lists the theme names alphabetically.
+func sortedThemes() []string {
+	names := make([]string, 0, len(themes))
+	for n := range themes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
 
 func headerStyles(focused bool) hdrStyles {
 	if focused {

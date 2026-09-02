@@ -86,13 +86,11 @@ type dirModel struct {
 	roLeft                bool // left side is a git ref: no copy toward it
 	entries               []dirEntry
 	rows                  []dirRow
-	showAll               bool
 	sel, top              int
 	w, h                  int
 	status                string
 	filter                string
 	filterInput           bool
-	focused               bool
 	undo                  []copyUndo
 }
 
@@ -106,7 +104,7 @@ type copyUndo struct {
 }
 
 func newDirModel(leftRoot, rightRoot string) (*dirModel, error) {
-	d := &dirModel{leftRoot: leftRoot, rightRoot: rightRoot, showAll: cfg.ShowIdentical}
+	d := &dirModel{leftRoot: leftRoot, rightRoot: rightRoot}
 	if err := d.scan(); err != nil {
 		return nil, err
 	}
@@ -117,8 +115,8 @@ func newDirModel(leftRoot, rightRoot string) (*dirModel, error) {
 }
 
 func (d *dirModel) scan() error {
-	seen := map[string]int{} // bit 1 = left, bit 2 = right
-	walk := func(root string, bit int) error {
+	seen := map[string]bool{}
+	walk := func(root string) error {
 		return filepath.WalkDir(root, func(p string, de fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -136,21 +134,27 @@ func (d *dirModel) scan() error {
 			if !de.Type().IsRegular() || ignored(rel) {
 				return nil
 			}
-			seen[rel] |= bit
+			seen[rel] = true
 			return nil
 		})
 	}
-	if err := walk(d.leftRoot, 1); err != nil {
+	if err := walk(d.leftRoot); err != nil {
 		return err
 	}
-	if err := walk(d.rightRoot, 2); err != nil {
+	if err := walk(d.rightRoot); err != nil {
 		return err
 	}
 	rels := make([]string, 0, len(seen))
 	for rel := range seen {
 		rels = append(rels, rel)
 	}
-	// group files of a directory together
+	d.setEntries(rels)
+	return nil
+}
+
+// setEntries replaces the entry list with rels, grouped by directory and
+// compared on disk.
+func (d *dirModel) setEntries(rels []string) {
 	sort.Slice(rels, func(i, j int) bool {
 		di, dj := filepath.Dir(rels[i]), filepath.Dir(rels[j])
 		if di != dj {
@@ -160,20 +164,22 @@ func (d *dirModel) scan() error {
 	})
 	d.entries = d.entries[:0]
 	for _, rel := range rels {
-		d.entries = append(d.entries, dirEntry{rel, d.compare(rel, seen[rel])})
+		d.entries = append(d.entries, dirEntry{rel, d.compare(rel)})
 	}
 	d.rebuildList()
-	return nil
 }
 
-func (d *dirModel) compare(rel string, bits int) dirStatus {
-	switch bits {
-	case 1:
+// compare determines the status of rel from the two roots on disk.
+func (d *dirModel) compare(rel string) dirStatus {
+	l, r := filepath.Join(d.leftRoot, rel), filepath.Join(d.rightRoot, rel)
+	_, lerr := os.Stat(l)
+	_, rerr := os.Stat(r)
+	switch {
+	case lerr == nil && rerr != nil:
 		return stOnlyLeft
-	case 2:
+	case lerr != nil && rerr == nil:
 		return stOnlyRight
-	}
-	if filesEqual(filepath.Join(d.leftRoot, rel), filepath.Join(d.rightRoot, rel)) {
+	case filesEqual(l, r):
 		return stSame
 	}
 	return stModified
@@ -211,14 +217,15 @@ func (d *dirModel) rebuildList() {
 	d.rows = d.rows[:0]
 	lastDir := "\x00"
 	lastHeader := -1
+	filter := strings.ToLower(d.filter)
 	for i, e := range d.entries {
-		if !d.showAll && e.status == stSame {
+		if !cfg.ShowIdentical && e.status == stSame {
 			continue
 		}
 		if ignored(e.rel) {
 			continue
 		}
-		if d.filter != "" && !strings.Contains(strings.ToLower(e.rel), strings.ToLower(d.filter)) {
+		if filter != "" && !strings.Contains(strings.ToLower(e.rel), filter) {
 			continue
 		}
 		if dir := filepath.Dir(e.rel); dir != lastDir {
@@ -291,15 +298,8 @@ func (d *dirModel) refreshSelected() {
 	if e == nil {
 		return
 	}
-	bits := 0
-	if _, err := os.Stat(filepath.Join(d.leftRoot, e.rel)); err == nil {
-		bits |= 1
-	}
-	if _, err := os.Stat(filepath.Join(d.rightRoot, e.rel)); err == nil {
-		bits |= 2
-	}
 	old := e.status
-	e.status = d.compare(e.rel, bits)
+	e.status = d.compare(e.rel)
 	// a pair synced in this session stays visible instead of vanishing
 	if e.status == stSame && old != stSame {
 		e.status = stApplied
@@ -423,10 +423,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, info.Mode().Perm())
+	return writeFileMkdir(dst, data, info.Mode().Perm())
 }
 
 func (d *dirModel) update(msg tea.Msg) tea.Cmd {
@@ -447,19 +444,9 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 				d.filterInput = false
 				d.filter = ""
 				d.rebuildList()
-			case "backspace":
-				if rs := []rune(d.filter); len(rs) > 0 {
-					d.filter = string(rs[:len(rs)-1])
-				}
-				d.rebuildList()
 			default:
-				if msg.Type == tea.KeyRunes || msg.String() == " " {
-					d.filter += string(msg.Runes)
-					if msg.String() == " " {
-						d.filter += " "
-					}
-					d.rebuildList()
-				}
+				d.filter = editText(d.filter, msg)
+				d.rebuildList()
 			}
 			return nil
 		}
@@ -491,8 +478,7 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 		case "G":
 			d.move(len(d.rows))
 		case "a":
-			d.showAll = !d.showAll
-			cfg.ShowIdentical = d.showAll
+			cfg.ShowIdentical = !cfg.ShowIdentical
 			d.rebuildList()
 		case "l", "right", ">":
 			d.copyEntry(true)
@@ -505,17 +491,11 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-func (d *dirModel) view() string {
+func (d *dirModel) view(focused bool) string {
 	if d.w == 0 || d.h == 0 {
 		return ""
 	}
 	var b strings.Builder
-	tail := func(p string, w int) string {
-		if runewidth.StringWidth(p) > w {
-			return runewidth.TruncateLeft(p, runewidth.StringWidth(p)-w+1, "…")
-		}
-		return p
-	}
 	lh, rh := displayPath(d.leftRoot), displayPath(d.rightRoot)
 	if d.leftLabel != "" {
 		lh = d.leftLabel
@@ -524,13 +504,9 @@ func (d *dirModel) view() string {
 		rh = displayPath(d.rightLabel)
 	}
 	sideW := max(4, (d.w-5)/2)
-	hs := headerStyles(d.focused)
-	focus := hs.bar.Render(" ")
-	if d.focused {
-		focus = hs.text.Render("▌")
-	}
-	head := focus + hs.text.Render(tail(lh, sideW)) +
-		hs.dim.Render(" ⇄ ") + hs.text.Render(tail(rh, sideW))
+	hs := headerStyles(focused)
+	head := hs.mark(focused) + hs.text.Render(truncLeft(lh, sideW)) +
+		hs.dim.Render(" ⇄ ") + hs.text.Render(truncLeft(rh, sideW))
 	b.WriteString(barPadWith(head, d.w, hs.bar) + "\n")
 
 	for i := d.top; i < d.top+d.bodyH(); i++ {
@@ -540,7 +516,7 @@ func (d *dirModel) view() string {
 		}
 		r := d.rows[i]
 		if r.header != "" {
-			b.WriteString("  " + styleGroup.Render(tail(r.header, max(4, d.w-10))) +
+			b.WriteString("  " + styleGroup.Render(truncLeft(r.header, max(4, d.w-10))) +
 				styleStSame.Render(fmt.Sprintf(" · %d", r.n)) + "\n")
 			continue
 		}
@@ -549,22 +525,21 @@ func (d *dirModel) view() string {
 		if d.w < 50 { // narrow tree pane: the glyph color carries the status
 			label = ""
 		}
-		glyphSt, labelSt, nameSt := e.status.style(), e.status.style(), lipgloss.NewStyle()
+		st, nameSt := e.status.style(), lipgloss.NewStyle()
 		mark, pad := " ", lipgloss.NewStyle()
 		if i == d.sel {
-			bg := lipgloss.Color(th.selBg)
-			glyphSt, labelSt = glyphSt.Background(bg), labelSt.Background(bg)
+			st = st.Background(lipgloss.Color(th.selBg))
 			nameSt, pad = styleSelected, styleSelected
 			mark = styleMark.Render("▌")
-			if !d.focused {
+			if !focused {
 				mark = styleGutter.Render("▌")
 			}
 		}
 		nameW := max(4, d.w-4-2-runewidth.StringWidth(label)-3)
 		name := runewidth.Truncate(filepath.Base(e.rel), nameW, "…")
 		gap := strings.Repeat(" ", max(1, nameW-runewidth.StringWidth(name)+1))
-		b.WriteString(mark + pad.Render("   ") + glyphSt.Render(e.status.glyph()) +
-			nameSt.Render(" "+name+gap) + labelSt.Render(label) + pad.Render(" ") + "\n")
+		b.WriteString(mark + pad.Render("   ") + st.Render(e.status.glyph()) +
+			nameSt.Render(" "+name+gap) + st.Render(label) + pad.Render(" ") + "\n")
 	}
 
 	info := d.countsInfo()

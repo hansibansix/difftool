@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -68,8 +67,10 @@ func (a *app) layout() {
 	}
 }
 
-func (a *app) fileDirty() bool {
-	return a.file != nil && (a.file.dirtyL || a.file.dirtyR)
+func (a *app) fileDirty() bool { return a.file != nil && a.file.dirty() }
+
+func (a *app) unsavedStatus() string {
+	return "unsaved changes in " + filepath.Base(a.openedRel) + " — save or undo first"
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -82,11 +83,19 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case closeFileMsg:
+		if a.dir == nil {
+			return a, tea.Quit
+		}
 		a.focusDiff = false
 		a.dir.refreshSelected()
 		return a, nil
 	case switchFileMsg:
-		if a.dir != nil {
+		switch {
+		case a.dir == nil:
+			a.file.status = "next/prev file needs directory mode"
+		case a.fileDirty():
+			a.file.status = "unsaved changes — s to save or u to undo first"
+		default:
 			a.dir.refreshSelected()
 			a.dir.move(msg.delta)
 			a.openSelected()
@@ -118,7 +127,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if a.dir == nil {
-		_, cmd := a.file.Update(msg)
+		cmd := a.file.update(msg)
 		return a, cmd
 	}
 	if a.focusDiff && a.file != nil {
@@ -128,7 +137,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		wasDirty := a.fileDirty()
-		_, cmd := a.file.Update(msg)
+		cmd := a.file.update(msg)
 		if wasDirty && !a.fileDirty() {
 			a.dir.refreshSelected() // saved: update the tree status
 		}
@@ -149,7 +158,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		case "h", "l", "left", "right", "<", ">", "u":
 			if a.fileDirty() {
-				a.dir.status = "unsaved changes in " + filepath.Base(a.openedRel) + " — save or undo first"
+				a.dir.status = a.unsavedStatus()
 				return a, nil
 			}
 			cmd := a.dir.update(msg)
@@ -165,7 +174,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd := a.dir.update(msg)
 	if cur := a.dir.selected(); cur != nil && cur.rel != a.openedRel {
 		if a.fileDirty() {
-			a.dir.status = "unsaved changes in " + filepath.Base(a.openedRel) + " — save or undo first"
+			a.dir.status = a.unsavedStatus()
 			a.dir.selectRel(prevRel)
 		} else {
 			a.openSelected()
@@ -194,24 +203,20 @@ func (a *app) View() string {
 		return a.settingsView()
 	}
 	if a.dir == nil {
-		return a.file.View()
-	}
-	a.dir.focused = !a.focusDiff
-	if a.file != nil {
-		a.file.focused = a.focusDiff
+		return a.file.view(false)
 	}
 	if !a.split() {
 		if a.focusDiff && a.file != nil {
-			return a.file.View()
+			return a.file.view(true)
 		}
-		return a.dir.view()
+		return a.dir.view(true)
 	}
 	right := a.placeholder()
 	if a.file != nil {
-		right = a.file.View()
+		right = a.file.view(a.focusDiff)
 	}
 	sep := strings.TrimSuffix(strings.Repeat(styleSep.Render("│")+"\n", a.h), "\n")
-	return lipgloss.JoinHorizontal(lipgloss.Top, a.dir.view(), sep, right)
+	return lipgloss.JoinHorizontal(lipgloss.Top, a.dir.view(!a.focusDiff), sep, right)
 }
 
 // placeholder fills the diff pane when no file is shown.
@@ -253,7 +258,6 @@ func (a *app) openSelected() {
 		a.note = "error: " + err.Error()
 		return
 	}
-	m.embedded = true
 	m.roLeft = a.dir.roLeft
 	m.leftName = filepath.Join(filepath.Base(a.dir.leftRoot), e.rel)
 	m.rightName = filepath.Join(filepath.Base(a.dir.rightRoot), e.rel)
@@ -355,21 +359,7 @@ func envOr(key, def string) string {
 	return def
 }
 
-func themeNames() string {
-	names := make([]string, 0, len(themes))
-	for n := range themes {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	s := ""
-	for i, n := range names {
-		if i > 0 {
-			s += ", "
-		}
-		s += n
-	}
-	return s
-}
+func themeNames() string { return strings.Join(sortedThemes(), ", ") }
 
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "difftool:", err)

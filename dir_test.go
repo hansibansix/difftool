@@ -51,7 +51,8 @@ func TestDirScan(t *testing.T) {
 	if n := fileRowCount(d); n != 3 {
 		t.Fatalf("visible list should hide same files, got %d", n)
 	}
-	d.showAll = true
+	cfg.ShowIdentical = true
+	defer func() { cfg.ShowIdentical = false }()
 	d.rebuildList()
 	if n := fileRowCount(d); n != 4 {
 		t.Fatalf("show all should list 4, got %d", n)

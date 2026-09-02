@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -78,14 +77,11 @@ func saveConfigTo(path string) error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return writeFileMkdir(path, append(data, '\n'), 0o644)
 }
 
 // ignored reports whether a slash-relative path matches an ignore pattern.
@@ -152,56 +148,42 @@ type menuItem struct {
 func (a *app) menuItems() []menuItem {
 	return []menuItem{
 		{"theme", func() string { return cfg.Theme }, func(d int) {
-			names := make([]string, 0, len(themes))
-			for n := range themes {
-				names = append(names, n)
-			}
-			sort.Strings(names)
-			i := 0
-			for j, n := range names {
-				if n == cfg.Theme {
-					i = j
-				}
-			}
-			cfg.Theme = names[(i+d+len(names))%len(names)]
-			a.applySettings()
+			cfg.Theme = cycle(sortedThemes(), cfg.Theme, d)
 		}},
 		{"syntax highlighting", func() string { return onOff(cfg.Syntax) }, func(int) {
 			cfg.Syntax = !cfg.Syntax
-			a.applySettings()
 		}},
 		{"intraline highlight", func() string { return onOff(cfg.Intraline) }, func(int) {
 			cfg.Intraline = !cfg.Intraline
-			a.applySettings()
 		}},
 		{"ignore whitespace", func() string { return onOff(cfg.IgnoreWs) }, func(int) {
 			cfg.IgnoreWs = !cfg.IgnoreWs
-			a.applySettings()
 		}},
 		{"tab width", func() string { return fmt.Sprint(cfg.TabWidth) }, func(d int) {
-			widths := []int{2, 4, 8}
-			i := 0
-			for j, w := range widths {
-				if w == cfg.TabWidth {
-					i = j
-				}
-			}
-			cfg.TabWidth = widths[(i+d+len(widths))%len(widths)]
-			a.applySettings()
+			cfg.TabWidth = cycle([]int{2, 4, 8}, cfg.TabWidth, d)
 		}},
 		{"show identical files (dirs)", func() string { return onOff(cfg.ShowIdentical) }, func(int) {
 			cfg.ShowIdentical = !cfg.ShowIdentical
-			a.applySettings()
 		}},
 		{"tree pane (dirs)", func() string { return onOff(cfg.ShowTree) }, func(int) {
 			a.toggleTree()
 		}},
 		{"ignore patterns (dirs)", ignoreSummary, func(int) {
 			cfg.UseIgnores = !cfg.UseIgnores
-			a.applySettings()
 			a.rescanDir()
 		}},
 	}
+}
+
+// cycle returns the element d steps after cur in xs, wrapping around.
+func cycle[T comparable](xs []T, cur T, d int) T {
+	i := 0
+	for j, x := range xs {
+		if x == cur {
+			i = j
+		}
+	}
+	return xs[((i+d)%len(xs)+len(xs))%len(xs)]
 }
 
 // applySettings makes setting changes take effect immediately.
@@ -211,7 +193,6 @@ func (a *app) applySettings() {
 		a.file.recompute()
 	}
 	if a.dir != nil {
-		a.dir.showAll = cfg.ShowIdentical
 		a.dir.rebuildList()
 	}
 }
@@ -261,8 +242,10 @@ func (a *app) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.menuSel = max(a.menuSel-1, 0)
 	case "l", "right", "enter", " ":
 		items[a.menuSel].change(1)
+		a.applySettings()
 	case "h", "left":
 		items[a.menuSel].change(-1)
+		a.applySettings()
 	}
 	return a, nil
 }
@@ -282,10 +265,10 @@ func (a *app) settingsView() string {
 			continue
 		}
 		it := items[i]
-		name := it.name + strings.Repeat(" ", max(1, 32-len(it.name)))
+		name := padCell(it.name, 32)
 		if i == a.menuSel {
 			b.WriteString(styleMark.Render("▌") +
-				styleSelected.Render(padCell(" "+name+" ", 0)) +
+				styleSelected.Render(" "+name+" ") +
 				valSelSt.Render(padCell(it.value(), 12)) + "\n")
 		} else {
 			b.WriteString("  " + name + " " + valSt.Render(it.value()) + "\n")

@@ -45,10 +45,9 @@ type model struct {
 	left, right         []string
 	leftNL, rightNL     bool
 
-	chunks        []chunk
-	rows          []row
-	nav           []navTarget
-	chunkFirstRow []int
+	chunks []chunk
+	rows   []row
+	nav    []navTarget
 
 	cur  int // index into nav
 	top  int // first visible row
@@ -68,9 +67,7 @@ type model struct {
 	pendingAll  bool // 'a' pressed, waiting for the direction key
 	status      string
 	quitConfirm bool
-	embedded    bool // opened from the directory view; close instead of quit
 	roLeft      bool // left side is a git ref: no apply ◀
-	focused     bool // pane focus in split view (header marker)
 	// display names for the header; differ from the paths in git mode
 	leftName, rightName string
 }
@@ -122,10 +119,7 @@ func writeLines(path string, lines []string, nl bool) error {
 	if nl && len(lines) > 0 {
 		s += "\n"
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(s), 0o644)
+	return writeFileMkdir(path, []byte(s), 0o644)
 }
 
 func (m *model) recompute() {
@@ -135,9 +129,11 @@ func (m *model) recompute() {
 	}
 	m.chunks = diffChunks(la, ra)
 	m.rows = m.rows[:0]
-	m.chunkFirstRow = make([]int, len(m.chunks))
+	m.nav = m.nav[:0]
 	for ci, c := range m.chunks {
-		m.chunkFirstRow[ci] = len(m.rows)
+		if c.kind == kindChange {
+			m.nav = append(m.nav, navTarget{ci, -1, len(m.rows)})
+		}
 		n := max(c.l1-c.l0, c.r1-c.r0)
 		for i := 0; i < n; i++ {
 			r := row{-1, -1, ci}
@@ -148,12 +144,6 @@ func (m *model) recompute() {
 				r.r = c.r0 + i
 			}
 			m.rows = append(m.rows, r)
-		}
-	}
-	m.nav = m.nav[:0]
-	for ci, c := range m.chunks {
-		if c.kind == kindChange {
-			m.nav = append(m.nav, navTarget{ci, -1, m.chunkFirstRow[ci]})
 		}
 	}
 	rowByL := make(map[int]int)
@@ -185,64 +175,47 @@ func (m *model) applyAll(toRight bool) {
 		m.status = "left side is read-only (git ref)"
 		return
 	}
-	before := len(m.undo)
-	count := 0
-	for count < 100000 {
-		idx := -1
-		for i, t := range m.nav {
-			if t.ci >= 0 {
-				idx = i
-				break
-			}
+	pending := 0
+	for _, c := range m.chunks {
+		if c.kind == kindChange {
+			pending++
 		}
-		if idx < 0 {
-			break
-		}
-		m.cur = idx
-		m.apply(toRight)
-		count++
 	}
-	if count == 0 {
+	if pending == 0 {
 		m.status = "no pending changes"
 		return
 	}
-	if len(m.undo) > before+1 {
-		m.undo = append(m.undo[:before], m.undo[before])
+	m.pushUndo()
+	// back to front: applying a chunk only shifts lines after it
+	for ci := len(m.chunks) - 1; ci >= 0; ci-- {
+		if m.chunks[ci].kind == kindChange {
+			m.applyChunk(m.chunks[ci], toRight)
+		}
 	}
-	arrow := "▶"
-	if !toRight {
-		arrow = "◀"
-	}
-	m.status = fmt.Sprintf("applied %s %d hunks", arrow, count)
+	m.recompute()
+	m.status = fmt.Sprintf("applied %s %d hunks", arrowOf(toRight), pending)
 }
 
 // resetAll resets every applied hunk, undoable in one step.
 func (m *model) resetAll() {
-	before := len(m.undo)
-	count := 0
-	for count < 100000 {
-		idx := -1
-		for i, t := range m.nav {
-			if t.ai >= 0 {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			break
-		}
-		m.cur = idx
-		m.resetApplied()
-		count++
-	}
-	if count == 0 {
+	if len(m.applied) == 0 {
 		m.status = "nothing to reset"
 		return
 	}
-	if len(m.undo) > before+1 {
-		m.undo = append(m.undo[:before], m.undo[before])
+	m.pushUndo()
+	n := len(m.applied)
+	// back to front by position: resetting a region only shifts regions after it
+	for len(m.applied) > 0 {
+		last := 0
+		for i, a := range m.applied {
+			if a.l0 > m.applied[last].l0 {
+				last = i
+			}
+		}
+		m.resetRegion(last)
 	}
-	m.status = fmt.Sprintf("↺ reset %d hunks", count)
+	m.recompute()
+	m.status = fmt.Sprintf("↺ reset %d hunks", n)
 }
 
 func (m *model) computeMatches() {
@@ -304,9 +277,16 @@ func (m *model) apply(toRight bool) {
 		m.status = "left side is read-only (git ref)"
 		return
 	}
-	c := m.chunks[m.nav[m.cur].ci]
-	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, m.dirtyL, m.dirtyR,
-		append([]appliedRegion(nil), m.applied...)})
+	m.pushUndo()
+	m.applyChunk(m.chunks[m.nav[m.cur].ci], toRight)
+	m.status = "applied " + arrowOf(toRight)
+	// deliberately no scrollToCur: the view stays put after an apply
+	m.recompute()
+}
+
+// applyChunk copies chunk c onto the other side and records the applied
+// region; callers snapshot and recompute.
+func (m *model) applyChunk(c chunk, toRight bool) {
 	if toRight {
 		if len(m.right) == 0 {
 			m.rightNL = m.leftNL
@@ -314,34 +294,18 @@ func (m *model) apply(toRight bool) {
 		orig := append([]string(nil), m.right[c.r0:c.r1]...)
 		m.right = splice(m.right, c.r0, c.r1, m.left[c.l0:c.l1])
 		m.dirtyR = true
-		m.status = "applied ▶"
-		delta := (c.l1 - c.l0) - (c.r1 - c.r0)
-		for i := range m.applied {
-			if m.applied[i].r0 >= c.r1 {
-				m.applied[i].r0 += delta
-				m.applied[i].r1 += delta
-			}
-		}
+		m.shiftApplied(true, c.r1, (c.l1-c.l0)-(c.r1-c.r0), -1)
 		m.applied = append(m.applied, appliedRegion{c.l0, c.l1, c.r0, c.r0 + (c.l1 - c.l0), true, orig})
-	} else {
-		if len(m.left) == 0 {
-			m.leftNL = m.rightNL
-		}
-		orig := append([]string(nil), m.left[c.l0:c.l1]...)
-		m.left = splice(m.left, c.l0, c.l1, m.right[c.r0:c.r1])
-		m.dirtyL = true
-		m.status = "applied ◀"
-		delta := (c.r1 - c.r0) - (c.l1 - c.l0)
-		for i := range m.applied {
-			if m.applied[i].l0 >= c.l1 {
-				m.applied[i].l0 += delta
-				m.applied[i].l1 += delta
-			}
-		}
-		m.applied = append(m.applied, appliedRegion{c.l0, c.l0 + (c.r1 - c.r0), c.r0, c.r1, false, orig})
+		return
 	}
-	// deliberately no scrollToCur: the view stays put after an apply
-	m.recompute()
+	if len(m.left) == 0 {
+		m.leftNL = m.rightNL
+	}
+	orig := append([]string(nil), m.left[c.l0:c.l1]...)
+	m.left = splice(m.left, c.l0, c.l1, m.right[c.r0:c.r1])
+	m.dirtyL = true
+	m.shiftApplied(false, c.l1, (c.r1-c.r0)-(c.l1-c.l0), -1)
+	m.applied = append(m.applied, appliedRegion{c.l0, c.l0 + (c.r1 - c.r0), c.r0, c.r1, false, orig})
 }
 
 // resetApplied restores the applied hunk under the cursor to its pre-apply
@@ -351,34 +315,59 @@ func (m *model) resetApplied() {
 		m.status = "not on an applied chunk"
 		return
 	}
-	ai := m.nav[m.cur].ai
+	m.pushUndo()
+	m.resetRegion(m.nav[m.cur].ai)
+	m.status = "↺ reset"
+	m.recompute()
+}
+
+// resetRegion puts the pre-apply content back for applied region ai and
+// drops the region; callers snapshot and recompute.
+func (m *model) resetRegion(ai int) {
 	a := m.applied[ai]
-	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, m.dirtyL, m.dirtyR,
-		append([]appliedRegion(nil), m.applied...)})
 	if a.toRight {
 		m.right = splice(m.right, a.r0, a.r1, a.orig)
 		m.dirtyR = true
-		delta := len(a.orig) - (a.r1 - a.r0)
-		for i := range m.applied {
-			if i != ai && m.applied[i].r0 >= a.r1 {
-				m.applied[i].r0 += delta
-				m.applied[i].r1 += delta
-			}
-		}
+		m.shiftApplied(true, a.r1, len(a.orig)-(a.r1-a.r0), ai)
 	} else {
 		m.left = splice(m.left, a.l0, a.l1, a.orig)
 		m.dirtyL = true
-		delta := len(a.orig) - (a.l1 - a.l0)
-		for i := range m.applied {
-			if i != ai && m.applied[i].l0 >= a.l1 {
-				m.applied[i].l0 += delta
-				m.applied[i].l1 += delta
-			}
-		}
+		m.shiftApplied(false, a.l1, len(a.orig)-(a.l1-a.l0), ai)
 	}
 	m.applied = append(m.applied[:ai], m.applied[ai+1:]...)
-	m.status = "↺ reset"
-	m.recompute()
+}
+
+// shiftApplied moves applied regions starting at or after `from` on one
+// side by delta lines (skip excludes the region being edited).
+func (m *model) shiftApplied(right bool, from, delta, skip int) {
+	for i := range m.applied {
+		a := &m.applied[i]
+		if i == skip {
+			continue
+		}
+		if right && a.r0 >= from {
+			a.r0 += delta
+			a.r1 += delta
+		}
+		if !right && a.l0 >= from {
+			a.l0 += delta
+			a.l1 += delta
+		}
+	}
+}
+
+func (m *model) pushUndo() {
+	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, m.dirtyL, m.dirtyR,
+		append([]appliedRegion(nil), m.applied...)})
+}
+
+func (m *model) dirty() bool { return m.dirtyL || m.dirtyR }
+
+func arrowOf(toRight bool) string {
+	if toRight {
+		return "▶"
+	}
+	return "◀"
 }
 
 // appliedAt returns the applied-region index a row lies in (-1 if none)
@@ -434,9 +423,7 @@ func (m *model) save() {
 	}
 }
 
-func (m *model) Init() tea.Cmd { return nil }
-
-func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
@@ -448,9 +435,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseButtonWheelDown:
 			m.top += 3
 		case tea.MouseButtonWheelLeft:
-			m.hOff = max(0, m.hOff-8)
+			m.scrollH(-8)
 		case tea.MouseButtonWheelRight:
-			m.hOff = min(4000, m.hOff+8)
+			m.scrollH(8)
 		}
 		m.clampScroll()
 	case tea.KeyMsg:
@@ -465,19 +452,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchInput = false
 				m.search = ""
 				m.matches = nil
-			case "backspace":
-				if rs := []rune(m.search); len(rs) > 0 {
-					m.search = string(rs[:len(rs)-1])
-				}
 			default:
-				if msg.Type == tea.KeyRunes || key == " " {
-					m.search += string(msg.Runes)
-					if key == " " {
-						m.search += " "
-					}
-				}
+				m.search = editText(m.search, msg)
 			}
-			return m, nil
+			return nil
 		}
 		if m.pendingAll {
 			m.pendingAll = false
@@ -489,7 +467,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			default:
 				m.status = "apply all cancelled"
 			}
-			return m, nil
+			return nil
 		}
 		if key != "q" && key != "esc" && key != "ctrl+c" {
 			m.quitConfirm = false
@@ -501,17 +479,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.search = ""
 				m.matches = nil
 				m.status = "search cleared"
-				return m, nil
+				return nil
 			}
-			if (m.dirtyL || m.dirtyR) && !m.quitConfirm {
+			if m.dirty() && !m.quitConfirm {
 				m.quitConfirm = true
 				m.status = "unsaved changes — q again to discard, s to save"
-				return m, nil
+				return nil
 			}
-			if m.embedded && key != "ctrl+c" {
-				return m, func() tea.Msg { return closeFileMsg{} }
+			if key == "ctrl+c" {
+				return tea.Quit
 			}
-			return m, tea.Quit
+			return func() tea.Msg { return closeFileMsg{} }
 		case "j", "down":
 			m.top++
 		case "k", "up":
@@ -528,9 +506,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cfg.Intraline = !cfg.Intraline
 			m.status = "intraline highlight " + onOff(cfg.Intraline)
 		case "H":
-			m.hOff = max(0, m.hOff-8)
+			m.scrollH(-8)
 		case "L":
-			m.hOff = min(4000, m.hOff+8)
+			m.scrollH(8)
 		case "n", "]":
 			if key == "n" && m.search != "" {
 				m.gotoMatch(1)
@@ -554,19 +532,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "X":
 			m.resetAll()
 		case "J", "K":
-			if !m.embedded {
-				m.status = "next/prev file needs directory mode"
-				break
-			}
-			if m.dirtyL || m.dirtyR {
-				m.status = "unsaved changes — s to save or u to undo first"
-				break
-			}
 			d := 1
 			if key == "K" {
 				d = -1
 			}
-			return m, func() tea.Msg { return switchFileMsg{d} }
+			return func() tea.Msg { return switchFileMsg{d} }
 		case "p", "[":
 			if m.cur > 0 {
 				m.cur--
@@ -585,10 +555,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clampScroll()
 	}
-	return m, nil
+	return nil
 }
 
-func (m *model) View() string {
+func (m *model) view(focused bool) string {
 	if m.w == 0 || m.h == 0 {
 		return ""
 	}
@@ -596,12 +566,8 @@ func (m *model) View() string {
 	gutW := len(fmt.Sprint(max(len(m.left), len(m.right), 1)))
 	var b strings.Builder
 
-	hs := headerStyles(m.focused)
-	focus := hs.bar.Render(" ")
-	if m.focused {
-		focus = hs.text.Render("▌")
-	}
-	head := focus +
+	hs := headerStyles(focused)
+	head := hs.mark(focused) +
 		pathCell(displayPath(m.leftName), paneW, m.dirtyL, hs) +
 		hs.sep.Render("│") +
 		pathCell(displayPath(m.rightName), paneW, m.dirtyR, hs)
@@ -636,10 +602,15 @@ func (m *model) View() string {
 				sep = styleAppliedMark.Render("◀")
 			}
 		}
+		var sa, sb2 []span
+		if c := m.chunks[r.ci]; c.kind == kindChange && c.l1 > c.l0 && c.r1 > c.r0 &&
+			r.l >= 0 && r.r >= 0 && cfg.Intraline {
+			sa, sb2 = changedSpans([]rune(expandTabs(m.left[r.l])), []rune(expandTabs(m.right[r.r])))
+		}
 		b.WriteString(mark +
-			m.renderSide(r, true, paneW, gutW, isCur) +
+			m.renderSide(r, true, paneW, gutW, isCur, sa) +
 			sep +
-			m.renderSide(r, false, paneW, gutW, isCur) + pad + sb + "\n")
+			m.renderSide(r, false, paneW, gutW, isCur, sb2) + pad + sb + "\n")
 	}
 
 	info := ""
@@ -711,7 +682,9 @@ func (m *model) scrollbar(bi int) string {
 	return st.Render(" ")
 }
 
-func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool) string {
+// renderSide draws one side of a row; spans are the intraline changes of
+// this side (computed once per row by the caller).
+func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans []span) string {
 	textW := max(1, paneW-gutW-2)
 	idx := r.r
 	lines := m.right
@@ -731,7 +704,6 @@ func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool) string
 
 	base := lipgloss.NewStyle()
 	emph := base
-	var spans []span
 	switch {
 	case c.kind == kindEqual:
 		if ai, _ := m.appliedAt(r); ai >= 0 {
@@ -746,14 +718,6 @@ func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool) string
 		gutSt = styleStModified
 		if cur {
 			base, emph = styleModCur, styleModEmphCur
-		}
-		if r.l >= 0 && r.r >= 0 && cfg.Intraline {
-			sa, sb := changedSpans([]rune(expandTabs(m.left[r.l])), []rune(expandTabs(m.right[r.r])))
-			if isLeft {
-				spans = sa
-			} else {
-				spans = sb
-			}
 		}
 	case isLeft:
 		base = styleDel
@@ -898,23 +862,58 @@ func pathCell(p string, w int, dirty bool, hs hdrStyles) string {
 	if dirty {
 		avail -= 2
 	}
-	if runewidth.StringWidth(p) > avail {
-		p = runewidth.TruncateLeft(p, runewidth.StringWidth(p)-avail+1, "…")
-	}
-	dir, base := filepath.Split(p)
+	dir, base := filepath.Split(truncLeft(p, avail))
 	s := hs.dim.Render(dir) + hs.text.Render(base)
 	if dirty {
 		s += hs.bar.Render(" ") + hs.dirty.Render("*")
 	}
-	return s + hs.bar.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(s))))
+	return barPadWith(s, w, hs.bar)
 }
+
+// truncLeft keeps the tail of s within w display cells, marking the cut with "…".
+func truncLeft(s string, w int) string {
+	if sw := runewidth.StringWidth(s); sw > w {
+		return runewidth.TruncateLeft(s, sw-w+1, "…")
+	}
+	return s
+}
+
+var homeDir, _ = os.UserHomeDir()
 
 // displayPath shortens the home directory to ~ for display.
 func displayPath(p string) string {
-	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(p, home+"/") {
-		return "~" + p[len(home):]
+	if homeDir != "" && strings.HasPrefix(p, homeDir+"/") {
+		return "~" + p[len(homeDir):]
 	}
 	return p
+}
+
+const maxHOff = 4000
+
+func (m *model) scrollH(delta int) { m.hOff = clamp(m.hOff+delta, 0, maxHOff) }
+
+// editText applies a key to a one-line text input: backspace drops the last
+// rune, printable runes and space are appended.
+func editText(s string, k tea.KeyMsg) string {
+	switch k.Type {
+	case tea.KeyBackspace:
+		if rs := []rune(s); len(rs) > 0 {
+			return string(rs[:len(rs)-1])
+		}
+	case tea.KeyRunes:
+		return s + string(k.Runes)
+	case tea.KeySpace:
+		return s + " "
+	}
+	return s
+}
+
+// writeFileMkdir writes data to path, creating parent directories.
+func writeFileMkdir(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, mode)
 }
 
 func clamp(v, lo, hi int) int {

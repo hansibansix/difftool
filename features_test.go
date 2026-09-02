@@ -126,7 +126,9 @@ func TestHighlightLines(t *testing.T) {
 }
 
 func TestDisplayPath(t *testing.T) {
-	t.Setenv("HOME", "/home/tester")
+	orig := homeDir
+	homeDir = "/home/tester"
+	defer func() { homeDir = orig }()
 	if got := displayPath("/home/tester/work/x.php"); got != "~/work/x.php" {
 		t.Fatalf("got %q", got)
 	}

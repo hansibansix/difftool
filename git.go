@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -93,11 +92,7 @@ func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 		if err != nil {
 			return fail(err)
 		}
-		dst := filepath.Join(tmp, rel)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return fail(err)
-		}
-		if err := os.WriteFile(dst, blob, 0o644); err != nil {
+		if err := writeFileMkdir(filepath.Join(tmp, rel), blob, 0o644); err != nil {
 			return fail(err)
 		}
 	}
@@ -122,30 +117,13 @@ func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 	d := &dirModel{
 		leftRoot: tmp, rightRoot: root,
 		leftLabel: ref, rightLabel: rightLabel,
-		roLeft: true, showAll: cfg.ShowIdentical,
+		roLeft: true,
 	}
 	sorted := make([]string, 0, len(rels))
 	for rel := range rels {
 		sorted = append(sorted, rel)
 	}
-	sort.Slice(sorted, func(i, j int) bool {
-		di, dj := filepath.Dir(sorted[i]), filepath.Dir(sorted[j])
-		if di != dj {
-			return di < dj
-		}
-		return sorted[i] < sorted[j]
-	})
-	for _, rel := range sorted {
-		bits := 0
-		if _, err := os.Stat(filepath.Join(tmp, rel)); err == nil {
-			bits |= 1
-		}
-		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
-			bits |= 2
-		}
-		d.entries = append(d.entries, dirEntry{rel, d.compare(rel, bits)})
-	}
-	d.rebuildList()
+	d.setEntries(sorted)
 	if d.selected() == nil {
 		d.status = "working tree matches " + ref
 	}
