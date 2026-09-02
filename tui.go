@@ -16,7 +16,12 @@ import (
 type row struct {
 	l, r int // line index per side, -1 = filler
 	ci   int // index into model.chunks
+	fold int // >0: stands for this many folded unchanged lines
 }
+
+// foldContext is how many unchanged lines stay visible around a change or
+// applied hunk when folding is on.
+const foldContext = 3
 
 type snapshot struct {
 	left, right []string
@@ -46,9 +51,12 @@ type model struct {
 	left, right         []string
 	leftNL, rightNL     bool
 
-	chunks []chunk
-	rows   []row
-	nav    []navTarget
+	chunks  []chunk
+	skipped []bool // per chunk: a change made only of ignorable lines (blank / regex)
+	rows    []row
+	nav     []navTarget
+	// chunk indices the user expanded by clicking their fold row
+	unfolded map[int]bool
 
 	cur  int // index into nav
 	top  int // first visible row
@@ -99,9 +107,57 @@ func newModel(leftPath, rightPath string) (*model, error) {
 	m.savedL, m.savedR = left, right
 	m.recompute()
 	if len(m.nav) == 0 {
-		m.status = "files are identical"
+		m.status = m.noChangesStatus()
 	}
 	return m, nil
+}
+
+func (m *model) noChangesStatus() string {
+	if n := m.skippedCount(); n > 0 {
+		return fmt.Sprintf("no changes apart from %d ignored", n)
+	}
+	return "files are identical"
+}
+
+func (m *model) skippedCount() int {
+	n := 0
+	for _, s := range m.skipped {
+		if s {
+			n++
+		}
+	}
+	return n
+}
+
+// isChange reports whether chunk ci is a pending, non-ignored change.
+func (m *model) isChange(ci int) bool { return m.chunks[ci].kind == kindChange && !m.skipped[ci] }
+
+// ignorable reports whether every line of a change consists of blank lines
+// (with IgnoreBlank) or lines matching the ignore regex; such changes are
+// shown plain and left out of navigation, apply-all and patches.
+func (m *model) ignorable(c chunk) bool {
+	if !cfg.IgnoreBlank && ignoreRe() == nil {
+		return false
+	}
+	for _, l := range m.left[c.l0:c.l1] {
+		if !ignorableLine(l) {
+			return false
+		}
+	}
+	for _, l := range m.right[c.r0:c.r1] {
+		if !ignorableLine(l) {
+			return false
+		}
+	}
+	return true
+}
+
+func ignorableLine(l string) bool {
+	if cfg.IgnoreBlank && strings.TrimSpace(l) == "" {
+		return true
+	}
+	re := ignoreRe()
+	return re != nil && re.MatchString(l)
 }
 
 func readLines(path string) ([]string, bool, error) {
@@ -141,22 +197,39 @@ func (m *model) recompute() {
 		ra = maskConflicts(ra)
 	}
 	m.chunks = diffChunks(la, ra)
+	m.skipped = m.skipped[:0]
+	for _, c := range m.chunks {
+		m.skipped = append(m.skipped, c.kind == kindChange && m.ignorable(c))
+	}
 	m.rows = m.rows[:0]
 	m.nav = m.nav[:0]
+	fold := cfg.Fold && m.search == "" // a search must be able to hit folded lines
 	for ci, c := range m.chunks {
-		if c.kind == kindChange {
+		if m.isChange(ci) {
 			m.nav = append(m.nav, navTarget{ci, -1, len(m.rows)})
 		}
-		n := max(c.l1-c.l0, c.r1-c.r0)
-		for i := 0; i < n; i++ {
-			r := row{-1, -1, ci}
-			if i < c.l1-c.l0 {
-				r.l = c.l0 + i
+		switch {
+		case c.kind == kindEqual && fold && !m.unfolded[ci]:
+			m.foldRows(ci, c)
+		case c.kind == kindChange && cfg.Unified: // deletions first, then insertions
+			for i := c.l0; i < c.l1; i++ {
+				m.rows = append(m.rows, row{l: i, r: -1, ci: ci})
 			}
-			if i < c.r1-c.r0 {
-				r.r = c.r0 + i
+			for i := c.r0; i < c.r1; i++ {
+				m.rows = append(m.rows, row{l: -1, r: i, ci: ci})
 			}
-			m.rows = append(m.rows, r)
+		default:
+			n := max(c.l1-c.l0, c.r1-c.r0)
+			for i := 0; i < n; i++ {
+				r := row{l: -1, r: -1, ci: ci}
+				if i < c.l1-c.l0 {
+					r.l = c.l0 + i
+				}
+				if i < c.r1-c.r0 {
+					r.r = c.r0 + i
+				}
+				m.rows = append(m.rows, r)
+			}
 		}
 	}
 	rowByL := make(map[int]int)
@@ -182,14 +255,55 @@ func (m *model) recompute() {
 	m.clampScroll()
 }
 
+// foldRows emits the rows of an unchanged chunk, collapsing every run of
+// lines that is farther than foldContext from a change or applied hunk into
+// one fold row (runs of a single line are not worth a fold row).
+func (m *model) foldRows(ci int, c chunk) {
+	n := c.l1 - c.l0
+	keep := func(i int) bool {
+		if (ci > 0 && i < foldContext) || (ci < len(m.chunks)-1 && i >= n-foldContext) {
+			return true
+		}
+		for _, a := range m.applied {
+			if l := c.l0 + i; l >= a.l0-foldContext && l < a.l1+foldContext {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < n; {
+		j := i
+		for j < n && !keep(j) {
+			j++
+		}
+		if j-i >= 2 {
+			m.rows = append(m.rows, row{l: -1, r: -1, ci: ci, fold: j - i})
+			i = j
+			continue
+		}
+		for ; i <= j && i < n; i++ {
+			m.rows = append(m.rows, row{l: c.l0 + i, r: c.r0 + i, ci: ci})
+		}
+	}
+}
+
+// unfold expands the fold rows of chunk ci for this file.
+func (m *model) unfold(ci int) {
+	if m.unfolded == nil {
+		m.unfolded = map[int]bool{}
+	}
+	m.unfolded[ci] = true
+	m.recompute()
+}
+
 // applyAll applies every pending change in one direction, undoable in one step.
 func (m *model) applyAll(toRight bool) {
 	if !m.canApply(toRight) {
 		return
 	}
 	pending := 0
-	for _, c := range m.chunks {
-		if c.kind == kindChange {
+	for ci := range m.chunks {
+		if m.isChange(ci) {
 			pending++
 		}
 	}
@@ -200,7 +314,7 @@ func (m *model) applyAll(toRight bool) {
 	m.pushUndo()
 	// back to front: applying a chunk only shifts lines after it
 	for ci := len(m.chunks) - 1; ci >= 0; ci-- {
-		if m.chunks[ci].kind == kindChange {
+		if m.isChange(ci) {
 			m.applyChunk(m.chunks[ci], toRight)
 		}
 	}
@@ -262,6 +376,12 @@ func (m *model) gotoMatch(delta int) {
 		m.matchIdx = (m.matchIdx + delta + len(m.matches)) % len(m.matches)
 	}
 	m.top = clamp(m.matches[m.matchIdx]-m.bodyH()/3, 0, m.maxTop())
+}
+
+func (m *model) clearSearch() {
+	m.search = ""
+	m.matches = nil
+	m.recompute() // folds again
 }
 
 func (m *model) bodyH() int  { return max(1, m.h-2) }
@@ -348,7 +468,11 @@ func (m *model) resetRegion(ai int) {
 func (m *model) chunkRows() (int, int) {
 	t := m.nav[m.cur]
 	c := m.chunks[t.ci]
-	return t.row, t.row + max(c.l1-c.l0, c.r1-c.r0) - 1
+	n := max(c.l1-c.l0, c.r1-c.r0)
+	if cfg.Unified {
+		n = (c.l1 - c.l0) + (c.r1 - c.r0)
+	}
+	return t.row, t.row + n - 1
 }
 
 // applySelection applies only the visually selected rows of the current
@@ -507,7 +631,11 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.scrollH(8)
 		case tea.MouseButtonLeft:
 			if msg.Action == tea.MouseActionPress {
-				m.selectRow(m.rowAtLine(msg.Y - 1))
+				if ri := m.rowAtLine(msg.Y - 1); ri >= 0 && m.rows[ri].fold > 0 {
+					m.unfold(m.rows[ri].ci)
+				} else {
+					m.selectRow(ri)
+				}
 			}
 		}
 		m.clampScroll()
@@ -517,12 +645,11 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			switch key {
 			case "enter":
 				m.searchInput = false
-				m.computeMatches()
+				m.recompute() // unfolds and computes the matches
 				m.gotoMatch(1)
 			case "esc", "ctrl+c":
 				m.searchInput = false
-				m.search = ""
-				m.matches = nil
+				m.clearSearch()
 			default:
 				m.search = editText(m.search, msg)
 			}
@@ -539,6 +666,9 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 				m.applySelection(true)
 			case "h", "left", "<":
 				m.applySelection(false)
+			case "P":
+				m.visual = false
+				m.exportPatch(m.nav[m.cur].ci)
 			case "esc", "v", "q":
 				m.visual = false
 				m.status = "selection cancelled"
@@ -565,8 +695,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		switch key {
 		case "q", "esc", "ctrl+c":
 			if key == "esc" && m.search != "" {
-				m.search = ""
-				m.matches = nil
+				m.clearSearch()
 				m.status = "search cleared"
 				return nil
 			}
@@ -603,6 +732,23 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			cfg.Wrap = !cfg.Wrap
 			saveConfig()
 			m.status = "line wrap " + onOff(cfg.Wrap)
+		case "z":
+			cfg.Fold = !cfg.Fold
+			m.unfolded = nil
+			saveConfig()
+			m.recompute()
+			m.scrollToCur()
+			m.status = "fold unchanged " + onOff(cfg.Fold)
+		case "o":
+			cfg.Unified = !cfg.Unified
+			saveConfig()
+			m.recompute()
+			m.scrollToCur()
+			m.status = "unified view " + onOff(cfg.Unified)
+		case "e", "E":
+			return m.editIn(key == "e")
+		case "P":
+			m.exportPatch(-1)
 		case "H":
 			m.scrollH(-8)
 		case "L":
@@ -636,6 +782,10 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		case "v":
 			if len(m.nav) == 0 || m.nav[m.cur].ci < 0 {
 				m.status = "select lines within a pending change"
+				break
+			}
+			if cfg.Unified {
+				m.status = "line selection needs the side-by-side view (o)"
 				break
 			}
 			m.visual = true
@@ -676,10 +826,11 @@ func (m *model) view(focused bool) string {
 	var b strings.Builder
 
 	hs := headerStyles(focused)
+	halfW := max(10, (m.w-3)/2) // the header keeps two cells in unified view too
 	head := hs.mark(focused) +
-		pathCell(displayPath(m.leftName), paneW, m.leftDirty(), hs) +
+		pathCell(displayPath(m.leftName), halfW, m.leftDirty(), hs) +
 		hs.sep.Render("│") +
-		pathCell(displayPath(m.rightName), paneW, m.rightDirty(), hs)
+		pathCell(displayPath(m.rightName), halfW, m.rightDirty(), hs)
 	b.WriteString(barPadWith(head, m.w, hs.bar) + "\n")
 
 	curCi, curAi := -1, -1
@@ -696,6 +847,11 @@ func (m *model) view(focused bool) string {
 			continue
 		}
 		r := m.rows[i]
+		if r.fold > 0 {
+			b.WriteString(" " + foldLine(r.fold, m.w-2) + sb + "\n")
+			lines++
+			continue
+		}
 		ai, toRight := m.appliedAt(r)
 		isCur := (curCi >= 0 && r.ci == curCi) || (curAi >= 0 && ai == curAi)
 		if m.visual { // highlight only the selected rows
@@ -717,7 +873,7 @@ func (m *model) view(focused bool) string {
 			}
 		}
 		var sa, sb2 []span
-		if c := m.chunks[r.ci]; c.kind == kindChange && c.l1 > c.l0 && c.r1 > c.r0 &&
+		if c := m.chunks[r.ci]; m.isChange(r.ci) && c.l1 > c.l0 && c.r1 > c.r0 &&
 			r.l >= 0 && r.r >= 0 && cfg.Intraline {
 			sa, sb2 = changedSpans([]rune(expandTabs(m.left[r.l])), []rune(expandTabs(m.right[r.r])))
 		}
@@ -742,10 +898,14 @@ func (m *model) view(focused bool) string {
 				}
 				sb = m.scrollbar(lines)
 			}
-			b.WriteString(mark +
-				m.renderSide(r, true, paneW, gutW, isCur, sa, hlL, k) +
-				sep +
-				m.renderSide(r, false, paneW, gutW, isCur, sb2, hlR, k) + pad + sb + "\n")
+			if cfg.Unified {
+				b.WriteString(mark + m.renderUnified(r, gutW, textW, isCur, hlL, hlR, k) + sb + "\n")
+			} else {
+				b.WriteString(mark +
+					m.renderSide(r, true, paneW, gutW, isCur, sa, hlL, k) +
+					sep +
+					m.renderSide(r, false, paneW, gutW, isCur, sb2, hlR, k) + pad + sb + "\n")
+			}
 			lines++
 		}
 	}
@@ -753,6 +913,12 @@ func (m *model) view(focused bool) string {
 	info := ""
 	if len(m.nav) > 0 {
 		info = fmt.Sprintf("change %d/%d", m.cur+1, len(m.nav))
+	}
+	if n := m.skippedCount(); n > 0 {
+		info += fmt.Sprintf(" · %d ignored", n)
+	}
+	if cfg.Unified {
+		info += " · unified"
 	}
 	if m.hOff > 0 && !cfg.Wrap {
 		if info != "" {
@@ -775,9 +941,15 @@ func (m *model) view(focused bool) string {
 	}
 	b.WriteString(footerBar(m.w, status, info, [][2]string{
 		{"n/p", "change"}, {"h·l", "◀ apply ▶"}, {"a", "all"}, {"x", "reset"},
-		{"u", "undo"}, {"s", "save"}, {"/", "search"}, {"?", "help"}, {"q", "quit"},
+		{"u", "undo"}, {"s", "save"}, {"e", "edit"}, {"/", "search"}, {"?", "help"}, {"q", "quit"},
 	}))
 	return b.String()
+}
+
+// foldLine draws the placeholder for n folded lines across w cells.
+func foldLine(n, w int) string {
+	label := fmt.Sprintf("╌╌╌╌ ⋯ %d unchanged lines ", n)
+	return styleFold.Render(label + strings.Repeat("╌", max(0, w-runewidth.StringWidth(label))))
 }
 
 // scrollbar returns the right-edge cell for body line bi: colored marks
@@ -802,7 +974,7 @@ func (m *model) scrollbar(bi int) string {
 	for i := seg0; i < seg1 && fg == ""; i++ {
 		r := m.rows[i]
 		c := m.chunks[r.ci]
-		if c.kind == kindChange {
+		if m.isChange(r.ci) {
 			switch {
 			case c.l1 > c.l0 && c.r1 > c.r0:
 				fg = th.stMod
@@ -825,10 +997,15 @@ func (m *model) scrollbar(bi int) string {
 	return st.Render(" ")
 }
 
-// geometry returns the pane width, gutter width and text width of a side.
+// geometry returns the pane width, gutter width and text width of a side;
+// in unified view the single pane spans the width and carries both gutters.
 func (m *model) geometry() (paneW, gutW, textW int) {
-	paneW = max(10, (m.w-3)/2)
 	gutW = len(fmt.Sprint(max(len(m.left), len(m.right), 1)))
+	if cfg.Unified {
+		paneW = max(10, m.w-2)
+		return paneW, gutW, max(1, paneW-2*gutW-4)
+	}
+	paneW = max(10, (m.w-3)/2)
 	return paneW, gutW, max(1, paneW-gutW-2)
 }
 
@@ -890,7 +1067,6 @@ func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans,
 	if isLeft {
 		idx, lines = r.l, m.left
 	}
-	c := m.chunks[r.ci]
 	if idx < 0 {
 		st := styleVoid
 		if cur {
@@ -899,38 +1075,7 @@ func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans,
 		return strings.Repeat(" ", gutW+1) + st.Render(strings.Repeat("╱", textW)) + " "
 	}
 	txt := expandTabs(lines[idx])
-	gutSt := styleGutter
-
-	base := lipgloss.NewStyle()
-	emph := base
-	switch {
-	case c.kind == kindEqual:
-		if ai, _ := m.appliedAt(r); ai >= 0 {
-			base = styleApplied
-			gutSt = styleStApplied
-			if cur {
-				base = styleAppliedCur
-			}
-		}
-	case c.l1 > c.l0 && c.r1 > c.r0:
-		base, emph = styleMod, styleModEmph
-		gutSt = styleStModified
-		if cur {
-			base, emph = styleModCur, styleModEmphCur
-		}
-	case isLeft:
-		base = styleDel
-		gutSt = styleStOnlyLeft
-		if cur {
-			base = styleDelCur
-		}
-	default:
-		base = styleIns
-		gutSt = styleStOnlyRight
-		if cur {
-			base = styleInsCur
-		}
-	}
+	base, emph, gutSt := m.rowStyles(r, isLeft, cur)
 	var fgs []fgSpan
 	if isLeft {
 		if idx < len(m.leftFgs) {
@@ -948,6 +1093,82 @@ func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans,
 		gut = strings.Repeat(" ", gutW+1)
 	}
 	return gut + clipAndStyle(txt, spans, fgs, hl, off, textW, marks, base, emph) + " "
+}
+
+// rowStyles picks the background, intraline emphasis and gutter styles for
+// one side of a row. Ignored changes are drawn plain; in unified view the
+// two halves of a modification are colored as deletion and insertion.
+func (m *model) rowStyles(r row, isLeft, cur bool) (base, emph, gut lipgloss.Style) {
+	c := m.chunks[r.ci]
+	base, gut = lipgloss.NewStyle(), styleGutter
+	emph = base
+	switch {
+	case c.kind == kindEqual:
+		if ai, _ := m.appliedAt(r); ai >= 0 {
+			base, gut = styleApplied, styleStApplied
+			if cur {
+				base = styleAppliedCur
+			}
+		}
+	case m.skipped[r.ci]:
+	case c.l1 > c.l0 && c.r1 > c.r0 && !cfg.Unified:
+		base, emph, gut = styleMod, styleModEmph, styleStModified
+		if cur {
+			base, emph = styleModCur, styleModEmphCur
+		}
+	case isLeft:
+		base, gut = styleDel, styleStOnlyLeft
+		if cur {
+			base = styleDelCur
+		}
+	default:
+		base, gut = styleIns, styleStOnlyRight
+		if cur {
+			base = styleInsCur
+		}
+	}
+	return base, emph, gut
+}
+
+// renderUnified draws a row of the unified view: both line numbers, a
+// -/+ sign (or the applied arrow) and the text of whichever side the row has.
+func (m *model) renderUnified(r row, gutW, textW int, cur bool, hlL, hlR []span, piece int) string {
+	isLeft := r.r < 0
+	idx, lines, fgs, hl := r.r, m.right, m.rightFgs, hlR
+	if isLeft {
+		idx, lines, fgs, hl = r.l, m.left, m.leftFgs, hlL
+	}
+	base, emph, gutSt := m.rowStyles(r, isLeft, cur)
+	num := func(i int) string {
+		if i < 0 {
+			return strings.Repeat(" ", gutW)
+		}
+		return fmt.Sprintf("%*d", gutW, i+1)
+	}
+	sign := gutSt.Render(" ")
+	switch c := m.chunks[r.ci]; {
+	case c.kind == kindChange && r.r < 0:
+		sign = gutSt.Render("-")
+	case c.kind == kindChange && r.l < 0:
+		sign = gutSt.Render("+")
+	default:
+		if ai, toRight := m.appliedAt(r); ai >= 0 {
+			sign = styleAppliedMark.Render(arrowOf(toRight))
+		}
+	}
+	gut := gutSt.Render(num(r.l) + " " + num(r.r) + " ")
+	if piece > 0 {
+		gut, sign = strings.Repeat(" ", 2*gutW+2), " "
+	}
+	off, marks := m.hOff, true
+	if cfg.Wrap {
+		off, marks = piece*textW, false
+	}
+	var f []fgSpan
+	if idx < len(fgs) {
+		f = fgs[idx]
+	}
+	return gut + sign + clipAndStyle(expandTabs(lines[idx]), nil, f, hl, off, textW, marks, base, emph) + " "
 }
 
 // searchSpans returns the rune ranges of s that match q case-insensitively.

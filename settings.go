@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,6 +24,28 @@ type config struct {
 	Wrap           bool     `json:"wrap"`
 	IgnorePatterns []string `json:"ignore_patterns"`
 	UseIgnores     bool     `json:"use_ignores"`
+	Fold           bool     `json:"fold"`
+	Unified        bool     `json:"unified"`
+	IgnoreBlank    bool     `json:"ignore_blank_lines"`
+	IgnoreRegex    string   `json:"ignore_regex"`
+}
+
+// ignoreRe returns the compiled IgnoreRegex (nil when empty or invalid; the
+// settings menu reports invalid patterns), recompiling only on change.
+func ignoreRe() *regexp.Regexp {
+	if cfg.IgnoreRegex == "" {
+		return nil
+	}
+	if ignoreReCache.src != cfg.IgnoreRegex {
+		ignoreReCache.src = cfg.IgnoreRegex
+		ignoreReCache.re, _ = regexp.Compile(cfg.IgnoreRegex)
+	}
+	return ignoreReCache.re
+}
+
+var ignoreReCache struct {
+	src string
+	re  *regexp.Regexp
 }
 
 // extraIgnores holds patterns from the -x flag; never persisted.
@@ -166,9 +189,21 @@ func (a *app) menuItems() []menuItem {
 		{"line wrap", func() string { return onOff(cfg.Wrap) }, func(int) {
 			cfg.Wrap = !cfg.Wrap
 		}, nil},
+		{"unified view", func() string { return onOff(cfg.Unified) }, func(int) {
+			cfg.Unified = !cfg.Unified
+		}, nil},
+		{"fold unchanged lines", func() string { return onOff(cfg.Fold) }, func(int) {
+			cfg.Fold = !cfg.Fold
+		}, nil},
 		{"ignore whitespace", func() string { return onOff(cfg.IgnoreWs) }, func(int) {
 			cfg.IgnoreWs = !cfg.IgnoreWs
 		}, nil},
+		{"ignore blank-line changes", func() string { return onOff(cfg.IgnoreBlank) }, func(int) {
+			cfg.IgnoreBlank = !cfg.IgnoreBlank
+		}, nil},
+		{"ignore lines matching · enter edits", regexSummary, func(int) {}, func() {
+			a.reInput, a.reText, a.reErr = true, cfg.IgnoreRegex, ""
+		}},
 		{"tab width", func() string { return fmt.Sprint(cfg.TabWidth) }, func(d int) {
 			cfg.TabWidth = cycle([]int{2, 4, 8}, cfg.TabWidth, d)
 		}, nil},
@@ -185,6 +220,35 @@ func (a *app) menuItems() []menuItem {
 	}
 	items[len(items)-1].open = func() { a.ignEdit = true }
 	return items
+}
+
+func regexSummary() string {
+	switch {
+	case cfg.IgnoreRegex == "":
+		return "off"
+	case ignoreRe() == nil:
+		return "invalid: " + cfg.IgnoreRegex
+	}
+	return cfg.IgnoreRegex
+}
+
+// updateRegexInput edits the ignore regex in the settings menu; an invalid
+// expression keeps the input open and shows the error.
+func (a *app) updateRegexInput(k tea.KeyMsg) {
+	switch k.String() {
+	case "enter":
+		if _, err := regexp.Compile(a.reText); err != nil {
+			a.reErr = err.Error()
+			return
+		}
+		cfg.IgnoreRegex = strings.TrimSpace(a.reText)
+		a.reInput = false
+		a.applySettings()
+	case "esc", "ctrl+c":
+		a.reInput = false
+	default:
+		a.reText, a.reErr = editText(a.reText, k), ""
+	}
 }
 
 // --- ignore pattern editor (sub-view of the settings menu) ---
@@ -345,6 +409,10 @@ func (a *app) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.updateIgnoreEditor(k)
 		return a, nil
 	}
+	if a.reInput {
+		a.updateRegexInput(k)
+		return a, nil
+	}
 	items := a.menuItems()
 	switch k.String() {
 	case "enter":
@@ -387,6 +455,14 @@ func (a *app) settingsView() string {
 	b.WriteString(barPad(styleBar.Render(" ")+styleHeaderText.Render("settings"), a.w) + "\n")
 	items := a.menuItems()
 	for i := 0; i < max(1, a.h-2); i++ {
+		if i == len(items)+1 && a.reInput {
+			b.WriteString("  " + styleStatus.Render("ignore lines matching: ") + a.reText + "▏")
+			if a.reErr != "" {
+				b.WriteString("  " + styleStOnlyLeft.Render(a.reErr))
+			}
+			b.WriteString("\n")
+			continue
+		}
 		if i >= len(items) {
 			b.WriteString("\n")
 			continue
@@ -401,8 +477,10 @@ func (a *app) settingsView() string {
 			b.WriteString("  " + name + " " + valSt.Render(it.value()) + "\n")
 		}
 	}
-	b.WriteString(footerBar(a.w, "", "", [][2]string{
-		{"j/k", "move"}, {"h·l", "change"}, {"enter", "change / edit"}, {"q", "close & save"},
-	}))
+	hints := [][2]string{{"j/k", "move"}, {"h·l", "change"}, {"enter", "change / edit"}, {"q", "close & save"}}
+	if a.reInput {
+		hints = [][2]string{{"enter", "set regex (empty = off)"}, {"esc", "cancel"}}
+	}
+	b.WriteString(footerBar(a.w, "", "", hints))
 	return b.String()
 }

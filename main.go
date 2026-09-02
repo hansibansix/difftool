@@ -41,6 +41,9 @@ type app struct {
 	ignEdit, ignInput bool
 	ignSel            int
 	ignText           string
+	// ignore regex input inside the settings menu
+	reInput       bool
+	reText, reErr string
 }
 
 func (a *app) Init() tea.Cmd { return nil }
@@ -87,6 +90,12 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.openSelected()
 			// start in the diff pane; the tree is one tab away
 			a.focusDiff = a.split() && a.file != nil
+		}
+		return a, nil
+	case editDoneMsg:
+		a.file.reload(msg.err)
+		if a.dir != nil {
+			a.dir.refreshSelected()
 		}
 		return a, nil
 	case closeFileMsg:

@@ -151,7 +151,7 @@ var (
 	styleApplied, styleAppliedCur, styleAppliedMark                            lipgloss.Style
 	styleStApplied                                                             lipgloss.Style
 	styleModEmph, styleModEmphCur                                              lipgloss.Style
-	styleSearch                                                                lipgloss.Style
+	styleSearch, styleFold                                                     lipgloss.Style
 	styleDelCur, styleInsCur, styleModCur, styleVoidCur                        lipgloss.Style
 	styleStModified, styleStOnlyLeft, styleStOnlyRight, styleStSame            lipgloss.Style
 	styleGroup                                                                 lipgloss.Style
@@ -196,6 +196,7 @@ func initStyles(t theme) {
 	styleModEmph = fgbg("", t.modEmphBg)
 	styleModEmphCur = fgbg("", t.modEmphCurBg)
 	styleSearch = fgbg(t.barBg, t.accent).Bold(true)
+	styleFold = fgbg(t.subtle, t.voidBg)
 	styleVoidCur = fgbg(t.sep, t.voidCurBg)
 	styleApplied = fgbg("", t.appliedBg)
 	styleAppliedCur = fgbg("", t.appliedCurBg)

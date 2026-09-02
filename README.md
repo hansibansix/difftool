@@ -47,10 +47,14 @@ The exit code is 1 while conflicts remain, so enable `trustExitCode`:
 | `/` `n`/`N`   | search, next/prev match             |
 | `J` / `K`     | next / prev file (dir mode)         |
 | `s`           | save modified file(s)               |
+| `e` / `E`     | edit the right / left file in `$VISUAL`/`$EDITOR` at the current hunk; the diff reloads on exit |
+| `P`           | export pending hunks as a unified patch (clipboard via wl-copy/xclip/xsel/pbcopy, else `./difftool.patch`); in visual mode only the current hunk |
 | `j` / `k`     | scroll, `ctrl+d`/`ctrl+u` half page |
 | `H` / `L`     | horizontal scroll (long lines)      |
 | `i`           | toggle intraline highlight          |
 | `w`           | toggle line wrap (persisted)        |
+| `o`           | toggle unified one-column view (persisted) |
+| `z`           | fold unchanged lines to 3 of context; click a fold to expand it (persisted) |
 | `,`           | settings menu                       |
 | `g` / `G`     | top / bottom                        |
 | `q` / `esc`   | quit (asks once on unsaved changes) |
@@ -91,8 +95,17 @@ click a pane to focus it, the wheel scrolls the pane under the pointer.
 
 `?` shows a help overlay with all keys.
 `,` opens the settings menu in any view: theme, syntax + intraline highlight,
-ignore whitespace, tab width, show identical files, ignore patterns on/off.
+line wrap, unified view, folding, ignore whitespace, ignore blank-line
+changes, ignore lines matching a regex, tab width, show identical files,
+ignore patterns on/off.
 Changes apply live and are saved to `~/.config/difftool/config.json` on close.
+
+Ignore rules: with *ignore blank-line changes* a hunk made only of blank
+lines is shown plain and skipped by `n`/`p`, apply-all and patch export;
+*ignore lines matching* (`ignore_regex`, e.g. `^\s*//` or `\$Id:`) does the
+same for hunks whose lines all match. The footer counts them as `N ignored`.
+In git mode the patch uses repo-relative `a/` `b/` paths, so
+`P` + `git apply --cached` stages exactly the shown hunks.
 
 ## Ignore patterns
 
