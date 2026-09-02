@@ -146,8 +146,45 @@ startup.
 256-color fallback. Select in the settings menu, via `-theme <name>`, or
 `DIFFTOOL_THEME=<name>` (precedence: flag > env > config).
 
-## Build
+## Install
 
+### Prebuilt binary
+
+Each `v*` tag publishes `tar.gz` archives for linux and macOS on amd64 and
+arm64. The repository is private, so downloads need an authenticated
+[`gh`](https://cli.github.com/) (a plain `curl` of the asset URL gets a 404):
+
+```sh
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+gh release download --repo hansibansix/difftool \
+    --pattern "*_${os}_${arch}.tar.gz" --dir /tmp
+tar -xzf /tmp/difftool_*.tar.gz -C ~/.local/bin
 ```
+
+Omit `--pattern` to grab every platform, or pass a tag (`gh release download
+v0.1.0 ...`) to pin a version instead of taking the latest.
+
+To verify the download, fetch `checksums.txt` from the same release:
+
+```sh
+gh release download --repo hansibansix/difftool --pattern 'checksums.txt' --dir /tmp
+cd /tmp && sha256sum --ignore-missing -c checksums.txt
+```
+
+### From source
+
+```sh
+git clone https://github.com/hansibansix/difftool.git
+cd difftool
 go build -o ~/.local/bin/difftool .
 ```
+
+Requires the Go version in `go.mod`; there are no cgo dependencies, so
+`GOOS`/`GOARCH` cross-compile out of the box.
+
+`go install github.com/hansibansix/difftool@latest` does **not** work: the
+module is declared as `module difftool`, which does not match the repository
+path (and the repository is private). Clone and build instead.
+
+Make sure `~/.local/bin` is on your `PATH`.
