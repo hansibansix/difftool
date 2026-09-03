@@ -1,0 +1,733 @@
+package tui
+
+import (
+	"bytes"
+	"difftool/internal/diff"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
+)
+
+type dirStatus int
+
+const (
+	stSame dirStatus = iota
+	stModified
+	stOnlyLeft
+	stOnlyRight
+	stApplied // was different, made equal in this session
+	stDeleted // removed from the side it existed on in this session
+)
+
+func (s dirStatus) label() string {
+	switch s {
+	case stModified:
+		return "modified"
+	case stOnlyLeft:
+		return "only left"
+	case stOnlyRight:
+		return "only right"
+	case stApplied:
+		return "applied"
+	case stDeleted:
+		return "deleted"
+	}
+	return "same"
+}
+
+func (s dirStatus) style() lipgloss.Style {
+	switch s {
+	case stModified:
+		return styleStModified
+	case stOnlyLeft:
+		return styleStOnlyLeft
+	case stOnlyRight:
+		return styleStOnlyRight
+	case stApplied:
+		return styleStApplied
+	case stDeleted:
+		return styleStOnlyLeft
+	}
+	return styleStSame
+}
+
+type dirEntry struct {
+	rel    string
+	status dirStatus
+	// diffstat, computed lazily for visible rows; hasStat guards the cache
+	add, del int
+	hasStat  bool
+}
+
+// diffstat fills in the added/removed line counts of an entry.
+func (d *dirModel) diffstat(e *dirEntry) {
+	e.hasStat = true
+	e.add, e.del = 0, 0
+	l, r := filepath.Join(d.leftRoot, e.rel), filepath.Join(d.rightRoot, e.rel)
+	if isBinary(l) || isBinary(r) {
+		return
+	}
+	ll, _, errL := readLines(l)
+	rl, _, errR := readLines(r)
+	if errL != nil || errR != nil {
+		return
+	}
+	for _, c := range diff.Chunks(ll, rl) {
+		if c.Kind == diff.Change {
+			e.add += c.R1 - c.R0
+			e.del += c.L1 - c.L0
+		}
+	}
+}
+
+// dirRow is one visible list row: a directory group header or a file.
+type dirRow struct {
+	header string // non-empty = group header row
+	n      int    // files in the group, for header rows
+	ei     int    // index into entries for file rows
+}
+
+type dirModel struct {
+	leftRoot, rightRoot string
+	// display labels for the header; differ from the roots in git mode
+	leftLabel, rightLabel string
+	roLeft, roRight       bool // side is a git ref: no copy toward it
+	entries               []dirEntry
+	rows                  []dirRow
+	sel, top              int
+	w, h                  int
+	status                string
+	filter                string
+	filterInput           bool
+	undo                  []copyUndo
+	batch                 int    // id of the current undoable tree operation
+	pendingDelete         string // path awaiting y/n confirmation
+	syncStep              int    // sync all: 1 = awaiting direction, 2 = awaiting y/n
+	syncToRight           bool
+}
+
+// copyUndo remembers what a tree-level copy overwrote so it can be undone.
+type copyUndo struct {
+	rel    string
+	dst    string
+	prev   []byte // nil: the destination did not exist
+	mode   os.FileMode
+	status dirStatus
+	batch  int // operations of one user action share a batch and undo together
+}
+
+func newDirModel(leftRoot, rightRoot string) (*dirModel, error) {
+	d := &dirModel{leftRoot: leftRoot, rightRoot: rightRoot}
+	if err := d.scan(); err != nil {
+		return nil, err
+	}
+	if d.selected() == nil {
+		d.status = "directories are identical"
+	}
+	return d, nil
+}
+
+func (d *dirModel) scan() error {
+	seen := map[string]bool{}
+	walk := func(root string) error {
+		return filepath.WalkDir(root, func(p string, de fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return err
+			}
+			if de.IsDir() {
+				if de.Name() == ".git" || (rel != "." && ignored(rel)) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !de.Type().IsRegular() || ignored(rel) {
+				return nil
+			}
+			seen[rel] = true
+			return nil
+		})
+	}
+	if err := walk(d.leftRoot); err != nil {
+		return err
+	}
+	if err := walk(d.rightRoot); err != nil {
+		return err
+	}
+	rels := make([]string, 0, len(seen))
+	for rel := range seen {
+		rels = append(rels, rel)
+	}
+	d.setEntries(rels)
+	return nil
+}
+
+// setEntries replaces the entry list with rels, grouped by directory and
+// compared on disk.
+func (d *dirModel) setEntries(rels []string) {
+	sort.Slice(rels, func(i, j int) bool {
+		di, dj := filepath.Dir(rels[i]), filepath.Dir(rels[j])
+		if di != dj {
+			return di < dj
+		}
+		return rels[i] < rels[j]
+	})
+	d.entries = d.entries[:0]
+	for _, rel := range rels {
+		d.entries = append(d.entries, dirEntry{rel: rel, status: d.compare(rel)})
+	}
+	d.rebuildList()
+}
+
+// compare determines the status of rel from the two roots on disk.
+func (d *dirModel) compare(rel string) dirStatus {
+	l, r := filepath.Join(d.leftRoot, rel), filepath.Join(d.rightRoot, rel)
+	_, lerr := os.Stat(l)
+	_, rerr := os.Stat(r)
+	switch {
+	case lerr != nil && rerr != nil:
+		return stDeleted
+	case lerr == nil && rerr != nil:
+		return stOnlyLeft
+	case lerr != nil && rerr == nil:
+		return stOnlyRight
+	case filesEqual(l, r):
+		return stSame
+	}
+	return stModified
+}
+
+func filesEqual(a, b string) bool {
+	ia, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	ib, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	if ia.Size() != ib.Size() {
+		return false
+	}
+	da, err := os.ReadFile(a)
+	if err != nil {
+		return false
+	}
+	db, err := os.ReadFile(b)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(da, db)
+}
+
+func (d *dirModel) rebuildList() {
+	prevEi := -1
+	if r := d.rowAt(d.sel); r != nil && r.header == "" {
+		prevEi = r.ei
+	}
+	prevSel := d.sel
+	d.rows = d.rows[:0]
+	lastDir := "\x00"
+	lastHeader := -1
+	filter := strings.ToLower(d.filter)
+	for i, e := range d.entries {
+		if !cfg.ShowIdentical && e.status == stSame {
+			continue
+		}
+		if ignored(e.rel) {
+			continue
+		}
+		if filter != "" && !strings.Contains(strings.ToLower(e.rel), filter) {
+			continue
+		}
+		if dir := filepath.Dir(e.rel); dir != lastDir {
+			d.rows = append(d.rows, dirRow{header: dir + "/", ei: -1})
+			lastDir = dir
+			lastHeader = len(d.rows) - 1
+		}
+		d.rows = append(d.rows, dirRow{ei: i})
+		d.rows[lastHeader].n++
+	}
+	d.sel = -1
+	if prevEi >= 0 {
+		for i, r := range d.rows {
+			if r.header == "" && r.ei == prevEi {
+				d.sel = i
+				break
+			}
+		}
+	}
+	if d.sel < 0 {
+		d.sel = d.snapToFile(clamp(prevSel, 0, max(0, len(d.rows)-1)))
+	}
+	d.ensureVisible()
+}
+
+func (d *dirModel) rowAt(i int) *dirRow {
+	if i < 0 || i >= len(d.rows) {
+		return nil
+	}
+	return &d.rows[i]
+}
+
+// snapToFile returns the file row nearest to i (forward first), or -1.
+func (d *dirModel) snapToFile(i int) int {
+	for j := i; j < len(d.rows); j++ {
+		if d.rows[j].header == "" {
+			return j
+		}
+	}
+	for j := min(i, len(d.rows)-1); j >= 0; j-- {
+		if d.rows[j].header == "" {
+			return j
+		}
+	}
+	return -1
+}
+
+// selectRel moves the selection to the row showing rel, if listed.
+func (d *dirModel) selectRel(rel string) {
+	for i, r := range d.rows {
+		if r.header == "" && d.entries[r.ei].rel == rel {
+			d.sel = i
+			d.ensureVisible()
+			return
+		}
+	}
+}
+
+func (d *dirModel) selected() *dirEntry {
+	if r := d.rowAt(d.sel); r != nil && r.header == "" {
+		return &d.entries[r.ei]
+	}
+	return nil
+}
+
+// refreshSelected re-compares the selected pair, e.g. after the file diff
+// view saved one side.
+func (d *dirModel) refreshSelected() {
+	e := d.selected()
+	if e == nil {
+		return
+	}
+	old := e.status
+	e.status = d.compare(e.rel)
+	e.hasStat = false
+	// a pair synced in this session stays visible instead of vanishing
+	if e.status == stSame && old != stSame {
+		e.status = stApplied
+	}
+	d.rebuildList()
+}
+
+func (d *dirModel) bodyH() int { return max(1, d.h-2) }
+
+func (d *dirModel) ensureVisible() {
+	if d.sel < 0 {
+		return
+	}
+	if d.sel < d.top {
+		d.top = d.sel
+		// pull the group header into view when its first file is selected
+		if d.sel > 0 && d.rows[d.sel-1].header != "" {
+			d.top = d.sel - 1
+		}
+	}
+	if d.sel >= d.top+d.bodyH() {
+		d.top = d.sel - d.bodyH() + 1
+	}
+	d.top = clamp(d.top, 0, max(0, len(d.rows)-d.bodyH()))
+}
+
+func (d *dirModel) move(delta int) {
+	if d.sel < 0 {
+		return
+	}
+	step := 1
+	if delta < 0 {
+		step, delta = -1, -delta
+	}
+	for n := 0; n < delta; n++ {
+		j := d.sel + step
+		for j >= 0 && j < len(d.rows) && d.rows[j].header != "" {
+			j += step
+		}
+		if j < 0 || j >= len(d.rows) {
+			break
+		}
+		d.sel = j
+	}
+	d.ensureVisible()
+}
+
+func (d *dirModel) copyEntry(toRight bool) {
+	e := d.selected()
+	if e == nil {
+		return
+	}
+	src := filepath.Join(d.leftRoot, e.rel)
+	dst := filepath.Join(d.rightRoot, e.rel)
+	arrow := "▶"
+	if toRight && d.roRight {
+		d.status = "right side is read-only (git ref)"
+		return
+	}
+	if !toRight {
+		if d.roLeft {
+			d.status = "left side is read-only (git ref)"
+			return
+		}
+		src, dst = dst, src
+		arrow = "◀"
+	}
+	if _, err := os.Stat(src); err != nil {
+		// no source: syncing means removing the file on the target side
+		if _, err := os.Stat(dst); err != nil {
+			d.status = "file exists on neither side"
+			return
+		}
+		side := "right"
+		if !toRight {
+			side = "left"
+		}
+		d.pendingDelete = dst
+		d.status = fmt.Sprintf("delete %s on the %s side? y/n", e.rel, side)
+		return
+	}
+	d.batch++
+	if err := d.copyOp(e, toRight); err != nil {
+		d.status = "error: " + err.Error()
+		return
+	}
+	d.status = "✓ copied " + arrow + " " + e.rel
+	d.rebuildList()
+}
+
+// undoCopy reverts the last tree-level copy: the destination gets its
+// previous content back, or is removed if the copy created it.
+func (d *dirModel) undoCopy() {
+	if len(d.undo) == 0 {
+		d.status = "nothing to undo"
+		return
+	}
+	// undo the whole batch of the last user action, newest file first
+	batch := d.undo[len(d.undo)-1].batch
+	n := 0
+	var last string
+	for len(d.undo) > 0 && d.undo[len(d.undo)-1].batch == batch {
+		u := d.undo[len(d.undo)-1]
+		d.undo = d.undo[:len(d.undo)-1]
+		var err error
+		if u.prev == nil {
+			err = os.Remove(u.dst)
+		} else {
+			err = os.WriteFile(u.dst, u.prev, u.mode)
+		}
+		if err != nil {
+			d.status = "error: " + err.Error()
+			d.rebuildList()
+			return
+		}
+		for i := range d.entries {
+			if d.entries[i].rel == u.rel {
+				d.entries[i].status = u.status
+				d.entries[i].hasStat = false
+			}
+		}
+		last = u.rel
+		n++
+	}
+	d.rebuildList()
+	d.selectRel(last)
+	d.status = "↺ undone " + last
+	if n > 1 {
+		d.status = fmt.Sprintf("↺ undone %d files", n)
+	}
+}
+
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	return writeFileMkdir(dst, data, info.Mode().Perm())
+}
+
+func (d *dirModel) update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case tea.MouseMsg:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			d.move(-1)
+		case tea.MouseButtonWheelDown:
+			d.move(1)
+		case tea.MouseButtonLeft:
+			if msg.Action == tea.MouseActionPress {
+				if r := d.rowAt(d.top + msg.Y - 1); r != nil && r.header == "" {
+					d.sel = d.top + msg.Y - 1
+				}
+			}
+		}
+	case tea.KeyMsg:
+		if d.pendingDelete != "" {
+			if k := msg.String(); k == "y" || k == "Y" {
+				d.deletePending()
+			} else {
+				d.pendingDelete = ""
+				d.status = "delete cancelled"
+			}
+			return nil
+		}
+		act := keys.dir.action(msg.String())
+		if msg.String() == "ctrl+c" {
+			act = "quit"
+		}
+		if d.syncStep == 1 {
+			switch act {
+			case "copy-right":
+				d.askSync(true)
+			case "copy-left":
+				d.askSync(false)
+			default:
+				d.syncStep = 0
+				d.status = "sync cancelled"
+			}
+			return nil
+		}
+		if d.syncStep == 2 {
+			d.syncStep = 0
+			if k := msg.String(); k == "y" || k == "Y" {
+				d.syncAll(d.syncToRight)
+			} else {
+				d.status = "sync cancelled"
+			}
+			return nil
+		}
+		if d.filterInput {
+			switch msg.String() {
+			case "enter":
+				d.filterInput = false
+			case "esc", "ctrl+c":
+				d.filterInput = false
+				d.filter = ""
+				d.rebuildList()
+			default:
+				d.filter = editText(d.filter, msg)
+				d.rebuildList()
+			}
+			return nil
+		}
+		d.status = ""
+		switch act {
+		case "filter":
+			d.filterInput = true
+			d.filter = ""
+			d.rebuildList()
+		case "quit":
+			if msg.String() == "esc" && d.filter != "" {
+				d.filter = ""
+				d.rebuildList()
+				return nil
+			}
+			return tea.Quit
+		case "down":
+			d.move(1)
+		case "up":
+			d.move(-1)
+		case "half-down":
+			d.move(d.bodyH() / 2)
+		case "half-up":
+			d.move(-d.bodyH() / 2)
+		case "top":
+			d.move(-len(d.rows))
+		case "bottom":
+			d.move(len(d.rows))
+		case "identical":
+			cfg.ShowIdentical = !cfg.ShowIdentical
+			d.rebuildList()
+		case "copy-right":
+			d.copyEntry(true)
+		case "copy-left":
+			d.copyEntry(false)
+		case "undo":
+			d.undoCopy()
+		case "sync-all":
+			d.syncStep = 1
+			d.status = fmt.Sprintf("sync all listed files: %s ▶ · %s ◀ · other key cancels", keys.dir.first("copy-right"), keys.dir.first("copy-left"))
+		}
+	}
+	return nil
+}
+
+// view renders the tree; dirtyRel names the entry whose diff has unsaved
+// changes so the user sees it before switching files.
+func (d *dirModel) view(focused bool, dirtyRel string) string {
+	if d.w == 0 || d.h == 0 {
+		return ""
+	}
+	var b strings.Builder
+	lh, rh := distinctTails(displayPath(d.leftRoot), displayPath(d.rightRoot))
+	if d.leftLabel != "" {
+		lh = d.leftLabel
+	}
+	if d.rightLabel != "" {
+		rh = displayPath(d.rightLabel)
+	}
+	sideW := max(4, (d.w-5)/2)
+	hs := headerStyles(focused)
+	head := hs.mark(focused) + hs.text.Render(shortenPath(lh, sideW)) +
+		hs.dim.Render(" ⇄ ") + hs.text.Render(shortenPath(rh, sideW))
+	b.WriteString(barPadWith(head, d.w, hs.bar) + "\n")
+
+	for i := d.top; i < d.top+d.bodyH(); i++ {
+		if i >= len(d.rows) {
+			b.WriteString("\n")
+			continue
+		}
+		r := d.rows[i]
+		if r.header != "" {
+			folder := ""
+			if cfg.Icons {
+				folder = lipgloss.NewStyle().Foreground(lipgloss.Color(iconFolder.color)).Render(iconFolder.glyph + " ")
+			}
+			b.WriteString("  " + folder + styleGroup.Render(truncLeft(r.header, max(4, d.w-12))) +
+				styleStSame.Render(fmt.Sprintf(" · %d", r.n)) + "\n")
+			continue
+		}
+		e := &d.entries[r.ei]
+		label := e.status.label()
+		stat := ""
+		if d.w < 50 { // narrow tree pane: the name color carries the status
+			label = ""
+		} else {
+			if !e.hasStat {
+				d.diffstat(e)
+			}
+			if e.add+e.del > 0 {
+				stat = fmt.Sprintf("+%d −%d", e.add, e.del)
+			}
+		}
+		st, nameSt := e.status.style(), lipgloss.NewStyle()
+		mark, pad := " ", lipgloss.NewStyle()
+		if i == d.sel {
+			st = st.Background(lipgloss.Color(th.selBg))
+			nameSt, pad = styleSelected, styleSelected
+			mark = styleMark.Render("▌")
+			if !focused {
+				mark = styleGutter.Render("▌")
+			}
+		}
+		if label == "" { // no label: the name carries the status color
+			nameSt = st
+		}
+		statW := 0
+		if stat != "" {
+			statW = runewidth.StringWidth(stat) + 2
+		}
+		nameW := max(4, d.w-4-1-runewidth.StringWidth(label)-3-statW)
+		unsaved := ""
+		if e.rel == dirtyRel {
+			unsaved = " *"
+			nameW -= 2
+		}
+		if n := sidecar.Count(e.rel); n > 0 {
+			unsaved += fmt.Sprintf(" ✎%d", n)
+			nameW -= 2 + len(fmt.Sprint(n))
+		}
+		icon := ""
+		if cfg.Icons {
+			ic := fileIcon(e.rel)
+			icon = pad.Foreground(lipgloss.Color(ic.color)).Render(" " + ic.glyph)
+			nameW -= 2
+		}
+		name := runewidth.Truncate(filepath.Base(e.rel), nameW, "…")
+		gap := strings.Repeat(" ", max(1, nameW-runewidth.StringWidth(name)+1))
+		statStr := ""
+		if stat != "" {
+			plus, minus, _ := strings.Cut(stat, " ")
+			statStr = styleStOnlyRight.Background(pad.GetBackground()).Render(plus) + pad.Render(" ") +
+				styleStOnlyLeft.Background(pad.GetBackground()).Render(minus) + pad.Render("  ")
+		}
+		b.WriteString(mark + pad.Render("  ") + icon +
+			nameSt.Render(" "+name) + styleMark.Render(unsaved) + nameSt.Render(gap) +
+			statStr + st.Render(label) + pad.Render(" ") + "\n")
+	}
+
+	info := d.countsInfo()
+	if d.filter != "" && !d.filterInput {
+		info += " · /" + d.filter
+	}
+	status := d.status
+	if d.filterInput {
+		status = "/" + d.filter + "▏"
+	}
+	dk := keys.dir
+	b.WriteString(footerBar(d.w, status, info, [][2]string{
+		{dk.first("open"), "diff"}, {dk.first("copy-left") + "·" + dk.first("copy-right"), "◀ copy ▶"}, {dk.first("filter"), "filter"},
+		{dk.first("identical"), "show all"}, {keys.global.first("help"), "help"}, {dk.first("quit"), "quit"},
+	}))
+	return b.String()
+}
+
+func (d *dirModel) countsInfo() string {
+	var nm, nl, nr, na, nd int
+	for _, e := range d.entries {
+		switch e.status {
+		case stModified:
+			nm++
+		case stOnlyLeft:
+			nl++
+		case stOnlyRight:
+			nr++
+		case stApplied:
+			na++
+		case stDeleted:
+			nd++
+		}
+	}
+	var parts []string
+	if nm > 0 {
+		parts = append(parts, fmt.Sprintf("%d modified", nm))
+	}
+	if nl > 0 {
+		parts = append(parts, fmt.Sprintf("%d only left", nl))
+	}
+	if nr > 0 {
+		parts = append(parts, fmt.Sprintf("%d only right", nr))
+	}
+	if na > 0 {
+		parts = append(parts, fmt.Sprintf("%d applied", na))
+	}
+	if nd > 0 {
+		parts = append(parts, fmt.Sprintf("%d deleted", nd))
+	}
+	if len(parts) == 0 {
+		return "no differences"
+	}
+	return strings.Join(parts, " · ")
+}
+
+func isBinary(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, 8192)
+	n, _ := f.Read(buf)
+	return bytes.IndexByte(buf[:n], 0) >= 0
+}

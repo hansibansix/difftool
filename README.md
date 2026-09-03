@@ -217,5 +217,10 @@ startup.
 ## Build
 
 ```
-go build -o ~/.local/bin/difftool .
+go build -o ~/.local/bin/difftool ./cmd/difftool
+cp scripts/difftool-review ~/.local/bin/       # optional: the herdr review wrapper
 ```
+
+Layout: `cmd/difftool` parses flags, `internal/tui` is the application,
+`internal/diff` the line and intraline diff, `internal/notes` the sidecar
+format, `scripts/` the helper for agents.
