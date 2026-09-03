@@ -643,6 +643,10 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 			unsaved = " *"
 			nameW -= 2
 		}
+		if n := noteCount(e.rel); n > 0 {
+			unsaved += fmt.Sprintf(" ✎%d", n)
+			nameW -= 2 + len(fmt.Sprint(n))
+		}
 		icon := ""
 		if cfg.Icons {
 			ic := fileIcon(e.rel)

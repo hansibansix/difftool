@@ -47,7 +47,7 @@ type app struct {
 	reText, reErr string
 }
 
-func (a *app) Init() tea.Cmd { return nil }
+func (a *app) Init() tea.Cmd { return notesTick() }
 
 func (a *app) split() bool { return a.dir != nil && cfg.ShowTree && a.w >= minSplitWidth }
 
@@ -99,6 +99,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.dir.refreshSelected()
 		}
 		return a, nil
+	case notesTickMsg:
+		if reloadNotes() && a.file != nil {
+			a.file.loadFileNotes()
+			a.file.recompute()
+			a.file.status = "notes reloaded"
+		}
+		return a, notesTick()
 	case closeFileMsg:
 		if a.dir == nil {
 			return a, tea.Quit
@@ -249,10 +256,10 @@ func (a *app) updateTree(msg tea.Msg) (tea.Model, tea.Cmd) {
 // keys, so app-level shortcuts must stay out of the way.
 func (a *app) inputActive() bool {
 	if a.dir == nil {
-		return a.file.searchInput
+		return a.file.searchInput || a.file.noteInput
 	}
 	if a.focusDiff && a.file != nil {
-		return a.file.searchInput
+		return a.file.searchInput || a.file.noteInput
 	}
 	return a.dir.filterInput
 }
@@ -342,6 +349,11 @@ func (a *app) openSelected() {
 	if a.dir.roRight {
 		m.rightName = a.dir.rightLabel + ":" + e.rel
 	}
+	if notes.path != "" { // match notes by the tree path, not the cwd-relative one
+		m.noteKey = e.rel
+		m.loadFileNotes()
+		m.recompute()
+	}
 	a.file, a.openedRel = m, e.rel
 	a.layout()
 	m.scrollToCur()
@@ -354,17 +366,24 @@ func main() {
 	mergeMode := flag.Bool("merge", false, "3-way merge: -merge LOCAL BASE REMOTE MERGED (git mergetool)")
 	exclude := flag.String("x", "", "additional ignore patterns, comma-separated globs")
 	showKeys := flag.Bool("keys", false, "print the key bindings as config.json snippet and exit")
+	notesPath := flag.String("notes", "", "agent notes sidecar (hunk --agent-context JSON); polled, notes typed here are written back")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: difftool [-theme name] <left> <right>  (two files or two directories)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git [ref] [path]  (working tree vs. git ref)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git A..B [path]   (two git refs, read-only)")
 		fmt.Fprintln(os.Stderr, "       difftool -merge LOCAL BASE REMOTE MERGED    (git mergetool)")
+		fmt.Fprintln(os.Stderr, "       -notes file.json in any mode shows agent notes beside the code")
 		fmt.Fprintf(os.Stderr, "themes: %s\n", themeNames())
 	}
 	flag.Parse()
 	if *showKeys {
 		fmt.Println(keysJSON())
 		return
+	}
+	if *notesPath != "" {
+		if err := loadNotes(*notesPath); err != nil {
+			fatal(err)
+		}
 	}
 	for _, w := range keyWarnings {
 		fmt.Fprintln(os.Stderr, "difftool: config:", w)

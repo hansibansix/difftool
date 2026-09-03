@@ -17,6 +17,7 @@ type row struct {
 	l, r int // line index per side, -1 = filler
 	ci   int // index into model.chunks
 	fold int // >0: stands for this many folded unchanged lines
+	note int // >0: shows model.notes[note-1] below the anchored line
 }
 
 // foldContext is how many unchanged lines stay visible around a change or
@@ -27,7 +28,8 @@ type snapshot struct {
 	left, right []string
 	cur         int
 	applied     []appliedRegion
-	side        int // merge mode: which input was shown on the left
+	side        int      // merge mode: which input was shown on the left
+	anchors     [][2]int // note anchors, which apply/reset shift
 }
 
 // appliedRegion remembers a chunk that was applied this session: both sides
@@ -87,6 +89,22 @@ type model struct {
 	merge         *mergeState // set in 3-way merge mode
 	// display names for the header; differ from the paths in git mode
 	leftName, rightName string
+
+	// line cursor: the row j/k move; n/p, clicks and note jumps place it,
+	// c annotates it
+	curRow int
+
+	// agent notes of this file (see notes.go); noteKey overrides the path
+	// they are matched by. The composer keeps the draft text, the row it is
+	// drawn under, the anchor it will get and the saved note being edited
+	// (nil for a new one).
+	notes      []*note
+	noteKey    string
+	noteInput  bool
+	noteText   string
+	noteRow    int
+	noteAnchor [2]int // newLine, oldLine
+	noteEdit   *note
 }
 
 func newModel(leftPath, rightPath string) (*model, error) {
@@ -105,6 +123,7 @@ func newModel(leftPath, rightPath string) (*model, error) {
 		leftNL: leftNL, rightNL: rightNL,
 	}
 	m.savedL, m.savedR = left, right
+	m.loadFileNotes()
 	m.recompute()
 	if len(m.nav) == 0 {
 		m.status = m.noChangesStatus()
@@ -232,6 +251,7 @@ func (m *model) recompute() {
 			}
 		}
 	}
+	m.insertNoteRows()
 	rowByL := make(map[int]int)
 	for i, r := range m.rows {
 		if r.l >= 0 {
@@ -247,6 +267,7 @@ func (m *model) recompute() {
 	}
 	sort.Slice(m.nav, func(i, j int) bool { return m.nav[i].row < m.nav[j].row })
 	m.cur = clamp(m.cur, 0, max(0, len(m.nav)-1))
+	m.curRow = clamp(m.curRow, 0, max(0, len(m.rows)-1))
 	m.leftFgs = highlightLines(m.leftPath, expandAll(m.left))
 	m.rightFgs = highlightLines(m.rightPath, expandAll(m.right))
 	if m.search != "" {
@@ -269,7 +290,7 @@ func (m *model) foldRows(ci int, c chunk) {
 				return true
 			}
 		}
-		return false
+		return m.hasNote(c.l0+i, c.r0+i)
 	}
 	for i := 0; i < n; {
 		j := i
@@ -375,7 +396,8 @@ func (m *model) gotoMatch(delta int) {
 	} else {
 		m.matchIdx = (m.matchIdx + delta + len(m.matches)) % len(m.matches)
 	}
-	m.top = clamp(m.matches[m.matchIdx]-m.bodyH()/3, 0, m.maxTop())
+	m.curRow = m.matches[m.matchIdx]
+	m.top = clamp(m.curRow-m.bodyH()/3, 0, m.maxTop())
 }
 
 func (m *model) clearSearch() {
@@ -393,7 +415,25 @@ func (m *model) scrollToCur() {
 	if len(m.nav) == 0 {
 		return
 	}
-	m.top = clamp(m.nav[m.cur].row-m.bodyH()/3, 0, m.maxTop())
+	m.curRow = m.nav[m.cur].row
+	m.top = clamp(m.curRow-m.bodyH()/3, 0, m.maxTop())
+}
+
+// setCursor moves the line cursor to row r, lets the current hunk follow it
+// and scrolls just enough to keep it on screen.
+func (m *model) setCursor(r int) {
+	if len(m.rows) == 0 {
+		m.curRow = 0
+		return
+	}
+	m.curRow = clamp(r, 0, len(m.rows)-1)
+	m.selectRow(m.curRow)
+	if m.curRow < m.top {
+		m.top = m.curRow
+	} else if m.curRow >= m.top+m.bodyH() {
+		m.top = m.curRow - m.bodyH() + 1
+	}
+	m.clampScroll()
 }
 
 func (m *model) apply(toRight bool) {
@@ -425,6 +465,7 @@ func (m *model) applyChunk(c chunk, toRight bool) {
 		orig := append([]string(nil), m.right[c.r0:c.r1]...)
 		m.right = splice(m.right, c.r0, c.r1, m.left[c.l0:c.l1])
 		m.shiftApplied(true, c.r1, (c.l1-c.l0)-(c.r1-c.r0), -1)
+		m.shiftNotes(true, c.r1, (c.l1-c.l0)-(c.r1-c.r0))
 		m.applied = append(m.applied, appliedRegion{c.l0, c.l1, c.r0, c.r0 + (c.l1 - c.l0), true, orig})
 		return
 	}
@@ -434,6 +475,7 @@ func (m *model) applyChunk(c chunk, toRight bool) {
 	orig := append([]string(nil), m.left[c.l0:c.l1]...)
 	m.left = splice(m.left, c.l0, c.l1, m.right[c.r0:c.r1])
 	m.shiftApplied(false, c.l1, (c.r1-c.r0)-(c.l1-c.l0), -1)
+	m.shiftNotes(false, c.l1, (c.r1-c.r0)-(c.l1-c.l0))
 	m.applied = append(m.applied, appliedRegion{c.l0, c.l0 + (c.r1 - c.r0), c.r0, c.r1, false, orig})
 }
 
@@ -457,22 +499,48 @@ func (m *model) resetRegion(ai int) {
 	if a.toRight {
 		m.right = splice(m.right, a.r0, a.r1, a.orig)
 		m.shiftApplied(true, a.r1, len(a.orig)-(a.r1-a.r0), ai)
+		m.shiftNotes(true, a.r1, len(a.orig)-(a.r1-a.r0))
 	} else {
 		m.left = splice(m.left, a.l0, a.l1, a.orig)
 		m.shiftApplied(false, a.l1, len(a.orig)-(a.l1-a.l0), ai)
+		m.shiftNotes(false, a.l1, len(a.orig)-(a.l1-a.l0))
 	}
 	m.applied = append(m.applied[:ai], m.applied[ai+1:]...)
 }
 
-// chunkRows returns the first and last row index of the current chunk.
+// chunkRows returns the first and last line row index of the current
+// chunk (note rows inside it are skipped by the visual cursor).
 func (m *model) chunkRows() (int, int) {
 	t := m.nav[m.cur]
-	c := m.chunks[t.ci]
-	n := max(c.l1-c.l0, c.r1-c.r0)
-	if cfg.Unified {
-		n = (c.l1 - c.l0) + (c.r1 - c.r0)
+	last := t.row
+	for last+1 < len(m.rows) && m.rows[last+1].ci == t.ci {
+		last++
 	}
-	return t.row, t.row + n - 1
+	for last > t.row && m.rows[last].note > 0 {
+		last--
+	}
+	return t.row, last
+}
+
+// lineRows counts the line rows (not note rows) in rows [from, to).
+func (m *model) lineRows(from, to int) int {
+	n := 0
+	for i := from; i < to; i++ {
+		if m.rows[i].note == 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// moveVisual moves the visual cursor by delta within [first, last],
+// stepping over note rows.
+func (m *model) moveVisual(delta, first, last int) {
+	v := clamp(m.vCur+delta, first, last)
+	for v > first && v < last && m.rows[v].note > 0 {
+		v += delta
+	}
+	m.vCur = v
 }
 
 // applySelection applies only the visually selected rows of the current
@@ -484,7 +552,8 @@ func (m *model) applySelection(toRight bool) {
 	}
 	c := m.chunks[m.nav[m.cur].ci]
 	first, _ := m.chunkRows()
-	a, b := min(m.vAnchor, m.vCur)-first, max(m.vAnchor, m.vCur)-first+1
+	lo, hi := min(m.vAnchor, m.vCur), max(m.vAnchor, m.vCur)
+	a, b := m.lineRows(first, lo), m.lineRows(first, hi+1)
 	nL, nR := c.l1-c.l0, c.r1-c.r0
 	sub := chunk{kindChange, c.l0 + min(a, nL), c.l0 + min(b, nL), c.r0 + min(a, nR), c.r0 + min(b, nR)}
 	m.visual = false
@@ -522,7 +591,7 @@ func (m *model) pushUndo() {
 	if m.merge != nil {
 		side = m.merge.idx
 	}
-	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, append([]appliedRegion(nil), m.applied...), side})
+	m.undo = append(m.undo, snapshot{m.left, m.right, m.cur, append([]appliedRegion(nil), m.applied...), side, m.noteAnchors()})
 }
 
 func (m *model) leftDirty() bool  { return !sameLines(m.left, m.savedL) }
@@ -584,6 +653,7 @@ func (m *model) undoLast() {
 	}
 	m.left, m.right, m.cur = s.left, s.right, s.cur
 	m.applied = s.applied
+	m.restoreAnchors(s.anchors)
 	m.recompute()
 	m.scrollToCur()
 	m.status = "↺ undone"
@@ -633,8 +703,8 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			if msg.Action == tea.MouseActionPress {
 				if ri := m.rowAtLine(msg.Y - 1); ri >= 0 && m.rows[ri].fold > 0 {
 					m.unfold(m.rows[ri].ci)
-				} else {
-					m.selectRow(ri)
+				} else if ri >= 0 {
+					m.setCursor(ri)
 				}
 			}
 		}
@@ -655,6 +725,20 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			}
 			return nil
 		}
+		if m.noteInput {
+			switch key {
+			case "ctrl+s":
+				m.saveNote()
+			case "enter":
+				m.noteText += "\n"
+			case "esc", "ctrl+c":
+				m.noteInput = false
+				m.status = "note cancelled"
+			default:
+				m.noteText = editText(m.noteText, msg)
+			}
+			return nil
+		}
 		act := keys.file.action(key)
 		if key == "ctrl+c" {
 			act = "quit"
@@ -663,9 +747,13 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			first, last := m.chunkRows()
 			switch act {
 			case "down":
-				m.vCur = min(m.vCur+1, last)
+				m.moveVisual(1, first, last)
 			case "up":
-				m.vCur = max(m.vCur-1, first)
+				m.moveVisual(-1, first, last)
+			case "note":
+				m.visual = false
+				m.curRow = m.vCur
+				m.startNote()
 			case "apply-right":
 				m.applySelection(true)
 			case "apply-left":
@@ -718,17 +806,17 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			}
 			return func() tea.Msg { return closeFileMsg{} }
 		case "down":
-			m.top++
+			m.setCursor(m.curRow + 1)
 		case "up":
-			m.top--
+			m.setCursor(m.curRow - 1)
 		case "half-down":
-			m.top += m.bodyH() / 2
+			m.setCursor(m.curRow + m.bodyH()/2)
 		case "half-up":
-			m.top -= m.bodyH() / 2
+			m.setCursor(m.curRow - m.bodyH()/2)
 		case "top":
-			m.top = 0
+			m.setCursor(0)
 		case "bottom":
-			m.top = m.maxTop()
+			m.setCursor(len(m.rows) - 1)
 		case "intraline":
 			cfg.Intraline = !cfg.Intraline
 			m.status = "intraline highlight " + onOff(cfg.Intraline)
@@ -766,6 +854,14 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 				m.cur++
 			}
 			m.scrollToCur()
+		case "next-note":
+			m.gotoNote(1)
+		case "prev-note":
+			m.gotoNote(-1)
+		case "note":
+			m.startNote()
+		case "note-delete":
+			m.deleteNote()
 		case "search-prev":
 			if m.search != "" {
 				m.gotoMatch(-1)
@@ -793,7 +889,12 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 				break
 			}
 			m.visual = true
-			m.vAnchor, m.vCur = m.nav[m.cur].row, m.nav[m.cur].row
+			first, last := m.chunkRows()
+			m.vAnchor = clamp(m.curRow, first, last)
+			if m.rows[m.vAnchor].note > 0 {
+				m.vAnchor = first
+			}
+			m.vCur = m.vAnchor
 			m.status = fmt.Sprintf("visual: %s extend · %s ▶ %s ◀ apply lines · esc cancel",
 				hint(keys.file, "down", "up"), keys.file.first("apply-right"), keys.file.first("apply-left"))
 		case "next-file", "prev-file":
@@ -854,6 +955,15 @@ func (m *model) view(focused bool) string {
 	}
 	pad := strings.Repeat(" ", max(0, m.w-1-(2+2*paneW)))
 	lines := 0
+	// full-width rows (notes, the composer) share one writer
+	wide := func(ls []string) {
+		for _, l := range ls {
+			if lines < m.bodyH() {
+				b.WriteString(" " + l + m.scrollbar(lines) + "\n")
+				lines++
+			}
+		}
+	}
 	for i := m.top; lines < m.bodyH(); i++ {
 		sb := m.scrollbar(lines)
 		if i >= len(m.rows) {
@@ -862,8 +972,20 @@ func (m *model) view(focused bool) string {
 			continue
 		}
 		r := m.rows[i]
+		if r.note > 0 {
+			if m.noteInput && m.noteEdit == m.notes[r.note-1] {
+				wide(m.composerLines(m.w - 2))
+			} else {
+				wide(m.noteLines(r, m.w-2, i == m.curRow))
+			}
+			continue
+		}
 		if r.fold > 0 {
-			b.WriteString(" " + foldLine(r, m.w-2) + sb + "\n")
+			mark := " "
+			if i == m.curRow {
+				mark = styleMark.Render("▶")
+			}
+			b.WriteString(mark + foldLine(r, m.w-2) + sb + "\n")
 			lines++
 			continue
 		}
@@ -878,6 +1000,9 @@ func (m *model) view(focused bool) string {
 		}
 		if m.matchIdx >= 0 && m.matchIdx < len(m.matches) && i == m.matches[m.matchIdx] {
 			mark = styleMark.Render("▸")
+		}
+		if i == m.curRow && !m.visual {
+			mark = styleMark.Render("▶")
 		}
 		sep := styleSep.Render("│")
 		if ai >= 0 {
@@ -906,7 +1031,7 @@ func (m *model) view(focused bool) string {
 			pieces = max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
 		}
 		for k := 0; k < pieces && lines < m.bodyH(); k++ {
-			if k > 0 { // continuation lines keep the chunk marker, not the match marker
+			if k > 0 { // continuation lines keep the chunk marker, not the cursor
 				mark = " "
 				if isCur {
 					mark = styleMark.Render("▌")
@@ -923,6 +1048,9 @@ func (m *model) view(focused bool) string {
 			}
 			lines++
 		}
+		if m.noteInput && m.noteEdit == nil && i == m.noteRow {
+			wide(m.composerLines(m.w - 2))
+		}
 	}
 
 	info := ""
@@ -931,6 +1059,14 @@ func (m *model) view(focused bool) string {
 	}
 	if n := m.skippedCount(); n > 0 {
 		info += fmt.Sprintf(" · %d ignored", n)
+	}
+	if n := len(m.notes); n > 0 {
+		info += fmt.Sprintf(" · %d notes", n)
+		for k, ri := range m.noteRows() {
+			if ri == m.curRow {
+				info += fmt.Sprintf(" (%d)", k+1)
+			}
+		}
 	}
 	if m.hOff > 0 && !cfg.Wrap {
 		if info != "" {
@@ -952,11 +1088,31 @@ func (m *model) view(focused bool) string {
 		status = "/" + m.search + "▏"
 	}
 	fk := keys.file
-	b.WriteString(footerBar(m.w, status, info, [][2]string{
+	if m.noteInput {
+		b.WriteString(footerBar(m.w, "✎ writing a note", info, [][2]string{
+			{"ctrl+s", "save"}, {"enter", "new line"}, {"esc", "cancel"},
+		}))
+		return b.String()
+	}
+	hints := [][2]string{
 		{hint(fk, "next", "prev"), "change"}, {fk.first("apply-left") + "·" + fk.first("apply-right"), "◀ apply ▶"},
 		{fk.first("apply-all"), "all"}, {fk.first("reset"), "reset"}, {fk.first("undo"), "undo"}, {fk.first("save"), "save"},
-		{fk.first("edit-right"), "edit"}, {fk.first("search"), "search"}, {keys.global.first("help"), "help"}, {fk.first("quit"), "quit"},
-	}))
+	}
+	if notes.path != "" {
+		onNote := len(m.rows) > 0 && m.rows[m.curRow].note > 0
+		switch {
+		case onNote && m.notes[m.rows[m.curRow].note-1].Author == "human":
+			hints = append(hints, [2]string{fk.first("note"), "edit note"}, [2]string{fk.first("note-delete"), "delete"})
+		case onNote:
+			hints = append(hints, [2]string{fk.first("note"), "reply"}, [2]string{fk.first("note-delete"), "dismiss"})
+		default:
+			hints = append(hints, [2]string{fk.first("note"), "note"})
+		}
+		hints = append(hints, [2]string{hint(fk, "next-note", "prev-note"), "notes"})
+	}
+	hints = append(hints, [2]string{fk.first("edit-right"), "edit"}, [2]string{fk.first("search"), "search"},
+		[2]string{keys.global.first("help"), "help"}, [2]string{fk.first("quit"), "quit"})
+	b.WriteString(footerBar(m.w, status, info, hints))
 	return b.String()
 }
 
@@ -1010,6 +1166,10 @@ func (m *model) scrollbar(bi int) string {
 	fg := ""
 	for i := seg0; i < seg1 && fg == ""; i++ {
 		r := m.rows[i]
+		if r.note > 0 {
+			fg = th.accent
+			break
+		}
 		c := m.chunks[r.ci]
 		if m.isChange(r.ci) {
 			switch {
@@ -1052,7 +1212,7 @@ func (m *model) rowAtLine(y int) int {
 	if y < 0 {
 		return -1
 	}
-	if !cfg.Wrap {
+	if !cfg.Wrap && len(m.notes) == 0 && !m.noteInput {
 		if r := m.top + y; r < len(m.rows) {
 			return r
 		}
@@ -1063,8 +1223,16 @@ func (m *model) rowAtLine(y int) int {
 	for i := m.top; i < len(m.rows); i++ {
 		r := m.rows[i]
 		n := 1
-		if r.fold == 0 {
+		switch {
+		case r.note > 0 && m.noteInput && m.noteEdit == m.notes[r.note-1]:
+			n = len(m.composerLines(m.w - 2))
+		case r.note > 0:
+			n = len(m.noteLines(r, m.w-2, false))
+		case r.fold == 0 && cfg.Wrap:
 			n = max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
+		}
+		if m.noteInput && m.noteEdit == nil && i == m.noteRow {
+			n += len(m.composerLines(m.w - 2))
 		}
 		if y < lines+n {
 			return i

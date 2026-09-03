@@ -8,6 +8,7 @@ difftool [-theme name] <left> <right>       # two files or two directories
 difftool [-theme name] -git [ref] [path]    # working tree vs. git ref (default HEAD)
 difftool [-theme name] -git A..B [path]     # two refs, both read-only
 difftool -merge LOCAL BASE REMOTE MERGED    # 3-way merge (git mergetool)
+difftool -notes notes.json ...              # any mode: show agent notes beside the code
 ```
 
 In git mode the left side is the ref version (read-only); applying a chunk
@@ -45,11 +46,13 @@ The exit code is 1 while conflicts remain, so enable `trustExitCode`:
 | `x` / `X`     | reset applied hunk / all            |
 | `u`           | undo last apply / reset / all       |
 | `/` `n`/`N`   | search, next/prev match             |
+| `}` / `{`     | next / prev note (`-notes`)         |
+| `c` / `C`     | note on the cursor line (on a note: edit yours, reply to the agent's) / delete the note under the cursor |
 | `J` / `K`     | next / prev file (dir mode)         |
 | `s`           | save modified file(s)               |
 | `e` / `E`     | edit the right / left file in `$VISUAL`/`$EDITOR` at the current hunk; the diff reloads on exit |
 | `P`           | export pending hunks as a unified patch (clipboard via wl-copy/xclip/xsel/pbcopy, else `./difftool.patch`); in visual mode only the current hunk |
-| `j` / `k`     | scroll, `ctrl+d`/`ctrl+u` half page |
+| `j` / `k`     | move the line cursor `▶` (the view follows), `ctrl+d`/`ctrl+u` half page |
 | `H` / `L`     | horizontal scroll (long lines)      |
 | `i`           | toggle intraline highlight          |
 | `w`           | toggle line wrap (persisted)        |
@@ -107,6 +110,43 @@ lines is shown plain and skipped by `n`/`p`, apply-all and patch export;
 same for hunks whose lines all match. The footer counts them as `N ignored`.
 In git mode the patch uses repo-relative `a/` `b/` paths, so
 `P` + `git apply --cached` stages exactly the shown hunks.
+
+## Agent notes
+
+`-notes file.json` loads remarks in [hunk](https://github.com/modem-dev/hunk)'s
+`--agent-context` format and shows each one as a tinted `✎` row below the
+line it refers to (`}`/`{` jump between them, the tree shows `✎N` per file,
+the scrollbar marks them). An agent that just edited a repo writes the file
+before you review:
+
+```json
+{
+  "comments": [
+    { "filePath": "local/foo/lib.php", "newLine": 42, "summary": "Switched to delete_records_select: the old loop ran one query per row." },
+    { "filePath": "local/foo/db/upgrade.php", "oldLine": 15, "summary": "Not sure the savepoint matches version.php, please check." },
+    { "filePath": "local/foo/version.php", "summary": "File-level remark (no line)." }
+  ]
+}
+```
+
+`newLine` counts lines of the right side (working tree in git mode),
+`oldLine` of the left; a note with neither sits at the top of the file.
+`filePath` is matched by suffix against the repo-relative path (git mode),
+the tree path (directory mode) or the cwd-relative path (two files), so
+`lib.php` and `repo/local/foo/lib.php` both find `local/foo/lib.php`.
+hunk's `hunk`/`hunkNumber` anchors and `markup` are not supported; such
+notes show at the top of their file and lose those fields when the file is
+rewritten.
+
+The file is polled once a second: an agent can append notes while the diff
+is open and they appear in place. Move the `▶` line cursor with `j`/`k` (or
+click a line) and press `c`: a composer opens under that line, `enter` adds
+a line, `ctrl+s` saves, `esc` cancels. The note is written into the same
+file with `"author": "human"` so the agent can read your feedback
+afterwards. On a note row `c` edits your own note or replies to an agent's
+(a new note on the same line), `C` deletes it. Anchors follow applied and
+reset hunks within the session; they are not rewritten when you edit the
+files externally.
 
 ## Ignore patterns
 
