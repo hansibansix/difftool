@@ -939,7 +939,6 @@ func (m *model) view(focused bool) string {
 	if m.w == 0 || m.h == 0 {
 		return ""
 	}
-	paneW, gutW, textW := m.geometry()
 	var b strings.Builder
 
 	hs := headerStyles(focused)
@@ -960,107 +959,19 @@ func (m *model) view(focused bool) string {
 	}
 	b.WriteString(barPadWith(head, m.w, hs.bar) + "\n")
 
-	curCi, curAi := -1, -1
-	if len(m.nav) > 0 {
-		curCi, curAi = m.nav[m.cur].ci, m.nav[m.cur].ai
-	}
-	pad := strings.Repeat(" ", max(0, m.w-1-(2+2*paneW)))
+	g := m.rowGeom()
 	lines := 0
-	// full-width rows (notes, the composer) share one writer
-	wide := func(ls []string) {
-		for _, l := range ls {
+	for i := m.top; lines < m.bodyH(); i++ {
+		if i >= len(m.rows) {
+			b.WriteString(strings.Repeat(" ", max(0, m.w-1)) + m.scrollbar(lines) + "\n")
+			lines++
+			continue
+		}
+		for _, l := range m.renderRow(i, g) {
 			if lines < m.bodyH() {
-				b.WriteString(" " + l + m.scrollbar(lines) + "\n")
+				b.WriteString(l + m.scrollbar(lines) + "\n")
 				lines++
 			}
-		}
-	}
-	for i := m.top; lines < m.bodyH(); i++ {
-		sb := m.scrollbar(lines)
-		if i >= len(m.rows) {
-			b.WriteString(strings.Repeat(" ", max(0, m.w-1)) + sb + "\n")
-			lines++
-			continue
-		}
-		r := m.rows[i]
-		if r.note > 0 {
-			if m.noteInput && m.noteEdit == m.notes[r.note-1] {
-				wide(m.composerLines(m.w - 2))
-			} else {
-				wide(m.noteLines(r, m.w-2, i == m.curRow))
-			}
-			continue
-		}
-		if m.noteInput && m.noteEdit == nil && i == m.noteRow {
-			wide(m.composerLines(m.w - 2))
-		}
-		if r.fold > 0 {
-			mark := " "
-			if i == m.curRow {
-				mark = styleMark.Render("▶")
-			}
-			b.WriteString(mark + foldLine(r, m.w-2) + sb + "\n")
-			lines++
-			continue
-		}
-		ai, toRight := m.appliedAt(r)
-		isCur := (curCi >= 0 && r.ci == curCi) || (curAi >= 0 && ai == curAi)
-		if m.visual { // highlight only the selected rows
-			isCur = i >= min(m.vAnchor, m.vCur) && i <= max(m.vAnchor, m.vCur)
-		}
-		mark := " "
-		if isCur {
-			mark = styleMark.Render("▌")
-		}
-		if m.matchIdx >= 0 && m.matchIdx < len(m.matches) && i == m.matches[m.matchIdx] {
-			mark = styleMark.Render("▸")
-		}
-		if i == m.curRow && !m.visual {
-			mark = styleMark.Render("▶")
-		}
-		sep := styleSep.Render("│")
-		if ai >= 0 {
-			if toRight {
-				sep = styleAppliedMark.Render("▶")
-			} else {
-				sep = styleAppliedMark.Render("◀")
-			}
-		}
-		var sa, sb2 []diff.Span
-		if c := m.chunks[r.ci]; m.isChange(r.ci) && c.L1 > c.L0 && c.R1 > c.R0 &&
-			r.l >= 0 && r.r >= 0 && cfg.Intraline {
-			sa, sb2 = diff.ChangedSpans([]rune(expandTabs(m.left[r.l])), []rune(expandTabs(m.right[r.r])))
-		}
-		var hlL, hlR []diff.Span
-		if m.search != "" {
-			if r.l >= 0 {
-				hlL = searchSpans(expandTabs(m.left[r.l]), m.search)
-			}
-			if r.r >= 0 {
-				hlR = searchSpans(expandTabs(m.right[r.r]), m.search)
-			}
-		}
-		pieces := 1
-		if cfg.Wrap {
-			pieces = max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
-		}
-		for k := 0; k < pieces && lines < m.bodyH(); k++ {
-			if k > 0 { // continuation lines keep the chunk marker, not the cursor
-				mark = " "
-				if isCur {
-					mark = styleMark.Render("▌")
-				}
-				sb = m.scrollbar(lines)
-			}
-			if cfg.Unified {
-				b.WriteString(mark + m.renderUnified(r, gutW, textW, isCur, hlL, hlR, k) + sb + "\n")
-			} else {
-				b.WriteString(mark +
-					m.renderSide(r, true, paneW, gutW, isCur, sa, hlL, k) +
-					sep +
-					m.renderSide(r, false, paneW, gutW, isCur, sb2, hlR, k) + pad + sb + "\n")
-			}
-			lines++
 		}
 	}
 
@@ -1139,6 +1050,110 @@ func (m *model) view(focused bool) string {
 		[2]string{keys.global.first("help"), "help"}, [2]string{fk.first("quit"), "quit"})
 	b.WriteString(footerBar(m.w, status, info, hints))
 	return b.String()
+}
+
+// rowGeom is what every row of one frame shares.
+type rowGeom struct {
+	paneW, gutW, textW int
+	pad                string // fills the odd cell in side-by-side view
+	curCi, curAi       int    // current chunk / applied region, -1 for none
+}
+
+func (m *model) rowGeom() rowGeom {
+	g := rowGeom{curCi: -1, curAi: -1}
+	g.paneW, g.gutW, g.textW = m.geometry()
+	g.pad = strings.Repeat(" ", max(0, m.w-1-(2+2*g.paneW)))
+	if len(m.nav) > 0 {
+		g.curCi, g.curAi = m.nav[m.cur].ci, m.nav[m.cur].ai
+	}
+	return g
+}
+
+// renderRow draws row i as its screen lines, each m.w-1 cells wide (the
+// caller appends the scrollbar cell): the note box or composer for a note
+// row, a fold placeholder, or the code with its wrapped pieces, preceded by
+// the composer when a new note is being written above this line. Click
+// hit-testing counts these same lines, so both always agree.
+func (m *model) renderRow(i int, g rowGeom) []string {
+	r := m.rows[i]
+	var out []string
+	wide := func(ls []string) {
+		for _, l := range ls {
+			out = append(out, " "+l)
+		}
+	}
+	if r.note > 0 {
+		if m.noteInput && m.noteEdit == m.notes[r.note-1] {
+			wide(m.composerLines(m.w - 2))
+		} else {
+			wide(m.noteLines(r, m.w-2, i == m.curRow))
+		}
+		return out
+	}
+	if m.noteInput && m.noteEdit == nil && i == m.noteRow {
+		wide(m.composerLines(m.w - 2))
+	}
+	if r.fold > 0 {
+		mark := " "
+		if i == m.curRow {
+			mark = styleMark.Render("▶")
+		}
+		return append(out, mark+foldLine(r, m.w-2))
+	}
+	ai, toRight := m.appliedAt(r)
+	isCur := (g.curCi >= 0 && r.ci == g.curCi) || (g.curAi >= 0 && ai == g.curAi)
+	if m.visual { // highlight only the selected rows
+		isCur = i >= min(m.vAnchor, m.vCur) && i <= max(m.vAnchor, m.vCur)
+	}
+	mark := " "
+	if isCur {
+		mark = styleMark.Render("▌")
+	}
+	if m.matchIdx >= 0 && m.matchIdx < len(m.matches) && i == m.matches[m.matchIdx] {
+		mark = styleMark.Render("▸")
+	}
+	if i == m.curRow && !m.visual {
+		mark = styleMark.Render("▶")
+	}
+	sep := styleSep.Render("│")
+	if ai >= 0 {
+		sep = styleAppliedMark.Render(arrowOf(toRight))
+	}
+	var sa, sb []diff.Span
+	if c := m.chunks[r.ci]; m.isChange(r.ci) && c.L1 > c.L0 && c.R1 > c.R0 &&
+		r.l >= 0 && r.r >= 0 && cfg.Intraline {
+		sa, sb = diff.ChangedSpans([]rune(expandTabs(m.left[r.l])), []rune(expandTabs(m.right[r.r])))
+	}
+	var hlL, hlR []diff.Span
+	if m.search != "" {
+		if r.l >= 0 {
+			hlL = searchSpans(expandTabs(m.left[r.l]), m.search)
+		}
+		if r.r >= 0 {
+			hlR = searchSpans(expandTabs(m.right[r.r]), m.search)
+		}
+	}
+	pieces := 1
+	if cfg.Wrap {
+		pieces = max(m.wrapCount(r.l, m.left, g.textW), m.wrapCount(r.r, m.right, g.textW))
+	}
+	for k := 0; k < pieces; k++ {
+		if k > 0 { // continuation lines keep the chunk marker, not the cursor
+			mark = " "
+			if isCur {
+				mark = styleMark.Render("▌")
+			}
+		}
+		if cfg.Unified {
+			out = append(out, mark+m.renderUnified(r, g.gutW, g.textW, isCur, hlL, hlR, k))
+		} else {
+			out = append(out, mark+
+				m.renderSide(r, true, g.paneW, g.gutW, isCur, sa, hlL, k)+
+				sep+
+				m.renderSide(r, false, g.paneW, g.gutW, isCur, sb, hlR, k)+g.pad)
+		}
+	}
+	return out
 }
 
 // modeBadges names the view settings that change what the diff shows, for
@@ -1231,8 +1246,8 @@ func (m *model) geometry() (paneW, gutW, textW int) {
 	return paneW, gutW, max(1, paneW-gutW-2)
 }
 
-// rowAtLine maps a body screen line to a row index (-1 if none), taking
-// wrapped rows into account.
+// rowAtLine maps a body screen line to a row index (-1 if none) by
+// counting the lines renderRow produces; plain rows take the shortcut.
 func (m *model) rowAtLine(y int) int {
 	if y < 0 {
 		return -1
@@ -1243,22 +1258,10 @@ func (m *model) rowAtLine(y int) int {
 		}
 		return -1
 	}
-	_, _, textW := m.geometry()
+	g := m.rowGeom()
 	lines := 0
 	for i := m.top; i < len(m.rows); i++ {
-		r := m.rows[i]
-		n := 1
-		switch {
-		case r.note > 0 && m.noteInput && m.noteEdit == m.notes[r.note-1]:
-			n = len(m.composerLines(m.w - 2))
-		case r.note > 0:
-			n = len(m.noteLines(r, m.w-2, false))
-		case r.fold == 0 && cfg.Wrap:
-			n = max(m.wrapCount(r.l, m.left, textW), m.wrapCount(r.r, m.right, textW))
-		}
-		if m.noteInput && m.noteEdit == nil && i == m.noteRow {
-			n += len(m.composerLines(m.w - 2))
-		}
+		n := len(m.renderRow(i, g))
 		if y < lines+n {
 			return i
 		}
