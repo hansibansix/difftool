@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# difftool-review: open a difftool review in a new herdr tab and return when
+# the reviewer quits it. Meant for agents: run it, block on it, then read the
+# notes sidecar. Any arguments are passed to difftool (default: -git).
+#
+#   difftool-review              # working tree vs HEAD, notes auto-detected
+#   difftool-review -git HEAD~3
+#
+# Prints difftool's closing summary line and exits 0 when the review closed,
+# non-zero when herdr is unavailable or the tab could not be driven.
+set -euo pipefail
+
+if [[ -z "${HERDR_SOCKET_PATH:-}" ]] || ! command -v herdr >/dev/null; then
+	echo "difftool-review: needs a running herdr session" >&2
+	exit 2
+fi
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+args=("$@")
+[[ ${#args[@]} -eq 0 ]] && args=(-git)
+
+created=$(herdr tab create --cwd "$root" --label "review: $(basename "$root")" --focus)
+read -r tab pane < <(printf '%s' "$created" | python3 -c \
+	'import json,sys; r=json.load(sys.stdin)["result"]; print(r["tab"]["tab_id"], r["root_pane"]["pane_id"])')
+trap 'herdr tab close "$tab" >/dev/null 2>&1 || true' EXIT
+
+# the shell prompt takes a moment; typing before it is up loses the command
+herdr pane wait-output --regex '[❯$#] ?$' --source visible --timeout 30000 "$pane" >/dev/null
+herdr pane run "$pane" "difftool $(printf '%q ' "${args[@]}")" >/dev/null
+# blocks until difftool prints its closing line (no timeout: reviews take as long as they take)
+# (source visible: herdr's scrollback snapshots stay empty for panes created over the API)
+herdr pane wait-output --match 'difftool: review closed' --source visible "$pane" >/dev/null
+herdr pane read --source visible "$pane" | grep -o 'difftool: review closed.*' | tail -1

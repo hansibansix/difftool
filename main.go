@@ -369,7 +369,7 @@ func main() {
 	mergeMode := flag.Bool("merge", false, "3-way merge: -merge LOCAL BASE REMOTE MERGED (git mergetool)")
 	exclude := flag.String("x", "", "additional ignore patterns, comma-separated globs")
 	showKeys := flag.Bool("keys", false, "print the key bindings as config.json snippet and exit")
-	notesPath := flag.String("notes", "", "agent notes sidecar (hunk --agent-context JSON); polled, notes typed here are written back")
+	notesPath := flag.String("notes", "", "agent notes sidecar (hunk --agent-context JSON); default: .difftool-notes.json in the repo root or cwd when present")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: difftool [-theme name] <left> <right>  (two files or two directories)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git [ref] [path]  (working tree vs. git ref)")
@@ -383,10 +383,14 @@ func main() {
 		fmt.Println(keysJSON())
 		return
 	}
+	if *notesPath == "" {
+		*notesPath = defaultNotesPath()
+	}
 	if *notesPath != "" {
 		if err := loadNotes(*notesPath); err != nil {
 			fatal(err)
 		}
+		defer notesSummary()
 	}
 	for _, w := range keyWarnings {
 		fmt.Fprintln(os.Stderr, "difftool: config:", w)
@@ -473,6 +477,38 @@ func main() {
 	if err := runProgram(a); err != nil {
 		fatal(err)
 	}
+}
+
+// defaultNotesPath finds the sidecar an agent left for this review: in the
+// repository root when inside one, else in the working directory.
+func defaultNotesPath() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	if root, err := gitCmd(dir, "rev-parse", "--show-toplevel"); err == nil {
+		dir = root
+	}
+	p := filepath.Join(dir, ".difftool-notes.json")
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
+}
+
+// notesSummary prints one line on exit so a wrapper (difftool-review) can
+// wait for it and an agent sees what the review left behind.
+func notesSummary() {
+	yours, resolved := 0, 0
+	for _, n := range notes.items {
+		if n.Author == "human" && !n.Resolved {
+			yours++
+		}
+		if n.Resolved {
+			resolved++
+		}
+	}
+	fmt.Fprintf(os.Stderr, "difftool: review closed · %d notes from you · %d resolved · %s\n", yours, resolved, notes.path)
 }
 
 func runProgram(a *app) error {

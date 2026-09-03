@@ -24,9 +24,12 @@ type note struct {
 	Summary  string `json:"summary"`
 	Author   string `json:"author,omitempty"`
 	// difftool extensions to hunk's format: a range ends at endLine on the
-	// anchored side; resolved notes collapse to one line
-	EndLine  int  `json:"endLine,omitempty"`
-	Resolved bool `json:"resolved,omitempty"`
+	// anchored side; resolved notes collapse to one line; match is the text
+	// of the anchored line, which wins over the line numbers when it is
+	// found exactly once, so notes survive edits and agents need no numbers
+	EndLine  int    `json:"endLine,omitempty"`
+	Resolved bool   `json:"resolved,omitempty"`
+	Match    string `json:"match,omitempty"`
 }
 
 // line returns the anchor line and whether it is on the right side.
@@ -151,6 +154,54 @@ func (m *model) loadFileNotes() {
 	m.notes = nil
 	if notes.path != "" {
 		m.notes = notesFor(m.notePath())
+	}
+	for _, n := range m.notes {
+		m.resolveMatch(n)
+	}
+}
+
+// findLine returns the 0-based index of the one line whose trimmed text
+// equals text, else the one line containing it, else -1.
+func findLine(lines []string, text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return -1
+	}
+	for _, eq := range []bool{true, false} {
+		hit := -1
+		for i, l := range lines {
+			if (eq && strings.TrimSpace(l) == text) || (!eq && strings.Contains(l, text)) {
+				if hit >= 0 {
+					hit = -2 // ambiguous
+					break
+				}
+				hit = i
+			}
+		}
+		if hit >= 0 {
+			return hit
+		}
+	}
+	return -1
+}
+
+// resolveMatch re-anchors a note on the line its match text names, right
+// side first; a range keeps its length. Line numbers stay as they are when
+// the text is missing or ambiguous.
+func (m *model) resolveMatch(n *note) {
+	if n.Match == "" {
+		return
+	}
+	start, _ := n.line()
+	if i := findLine(m.right, n.Match); i >= 0 {
+		n.NewLine, n.OldLine = i+1, 0
+	} else if i := findLine(m.left, n.Match); i >= 0 {
+		n.NewLine, n.OldLine = 0, i+1
+	} else {
+		return
+	}
+	if n.EndLine > 0 && start > 0 {
+		n.EndLine += max(n.NewLine, n.OldLine) - start
 	}
 }
 
@@ -430,6 +481,14 @@ func (m *model) saveNote() {
 		}
 		if m.noteEnd > max(n.NewLine, n.OldLine) {
 			n.EndLine = m.noteEnd
+		}
+		// remember the line's text so the note follows later edits
+		lines, ln := m.right, n.NewLine
+		if n.NewLine == 0 {
+			lines, ln = m.left, n.OldLine
+		}
+		if ln > 0 && ln <= len(lines) && findLine(lines, lines[ln-1]) == ln-1 {
+			n.Match = strings.TrimSpace(lines[ln-1])
 		}
 		notes.items = append(notes.items, n)
 	}

@@ -9,6 +9,7 @@ difftool [-theme name] -git [ref] [path]    # working tree vs. git ref (default 
 difftool [-theme name] -git A..B [path]     # two refs, both read-only
 difftool -merge LOCAL BASE REMOTE MERGED    # 3-way merge (git mergetool)
 difftool -notes notes.json ...              # any mode: show agent notes beside the code
+difftool-review [difftool args]             # agents: open the review in a herdr tab, return when it closes
 ```
 
 In git mode the left side is the ref version (read-only); applying a chunk
@@ -116,7 +117,9 @@ In git mode the patch uses repo-relative `a/` `b/` paths, so
 ## Agent notes
 
 `-notes file.json` loads remarks in [hunk](https://github.com/modem-dev/hunk)'s
-`--agent-context` format and shows each one as a framed box above the line
+`--agent-context` format (without the flag, a `.difftool-notes.json` in the
+repository root or the working directory is picked up) and shows each one as
+a framed box above the line
 it refers to, titled with its author and line (`}`/`{` jump between them,
 the tree shows `✎N` per file, the scrollbar marks them). An agent that just edited a repo writes the file
 before you review:
@@ -133,9 +136,12 @@ before you review:
 
 `newLine` counts lines of the right side (working tree in git mode),
 `oldLine` of the left; a note with neither sits at the top of the file.
-Two difftool additions: `endLine` turns the anchor into a range on the same
-side (the covered line numbers take the note's color, the title reads
-`L42-47`), and `"resolved": true` collapses the note to one dim line.
+Three difftool additions: `match` is the text of the anchored line and, when
+it occurs exactly once in the file, wins over the line number (so agents
+need not count lines and notes follow later edits); `endLine` turns the
+anchor into a range on the same side (the covered line numbers take the
+note's color, the title reads `L42-47`); `"resolved": true` collapses the
+note to one dim line. Notes you write record `match` automatically.
 `filePath` is matched by suffix against the repo-relative path (git mode),
 the tree path (directory mode) or the cwd-relative path (two files), so
 `lib.php` and `repo/local/foo/lib.php` both find `local/foo/lib.php`.
@@ -161,6 +167,13 @@ or editor wrote it) the view reloads, dropping applied markers and undo
 history like after `e`. Unsaved in-memory changes are never discarded; the
 status asks you to save or undo first. In directory mode only the open
 file is watched, the tree refreshes on the next selection.
+
+On quit difftool prints `difftool: review closed · N notes from you · M
+resolved` on stderr. `difftool-review` (a bash script, needs a running
+[herdr](https://herdr.dev) session) builds the agent loop on that: it opens
+difftool in a new herdr tab, blocks until that line appears, closes the tab
+and prints the line. An agent runs it in the background after writing its
+notes, is woken when you quit, and reads your notes right away.
 
 ## Ignore patterns
 

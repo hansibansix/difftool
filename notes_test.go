@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,7 +157,7 @@ func TestAddNoteWritesSidecarAndReloads(t *testing.T) {
 	if err := json.Unmarshal(data, &f); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Comments) != 1 || f.Comments[0] != (note{FilePath: "f.txt", NewLine: 2, Summary: "use get_string here", Author: "human"}) {
+	if len(f.Comments) != 1 || f.Comments[0] != (note{FilePath: "f.txt", NewLine: 2, Summary: "use get_string here", Author: "human", Match: "B"}) {
 		t.Fatalf("sidecar = %+v", f.Comments)
 	}
 	if len(m.notes) != 1 || m.noteRows() == nil {
@@ -372,5 +373,59 @@ func TestNotesToggle(t *testing.T) {
 	m.startNote() // composing needs the rows, so it shows them
 	if notesHidden || !m.noteInput {
 		t.Fatal("c must un-hide the notes")
+	}
+}
+
+func TestMatchAnchorsWinOverLineNumbers(t *testing.T) {
+	m := noteModel(t, []string{"a", "old only", "c"}, []string{"a", "b", "target line", "c", "b"},
+		note{FilePath: "f.txt", NewLine: 1, Match: "target line", Summary: "moves to line 3"},
+		note{FilePath: "f.txt", NewLine: 1, EndLine: 2, Match: "  target line ", Summary: "range keeps its length"},
+		note{FilePath: "f.txt", NewLine: 5, Match: "b", Summary: "ambiguous: stays on 5"},
+		note{FilePath: "f.txt", NewLine: 2, Match: "gone", Summary: "missing: stays on 2"},
+		note{FilePath: "f.txt", NewLine: 2, Match: "old only", Summary: "found on the left only"},
+	)
+	got := []string{}
+	for _, n := range m.notes {
+		got = append(got, fmt.Sprintf("%d/%d/%d", n.NewLine, n.OldLine, n.EndLine))
+	}
+	want := []string{"3/0/0", "3/0/4", "5/0/0", "2/0/0", "0/2/0"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("anchors = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestHumanNoteRemembersLineText(t *testing.T) {
+	m := noteModel(t, []string{"a", "b", "c"}, []string{"a", "  unique text  ", "c"})
+	m.setCursor(1)
+	m.startNote()
+	m.noteText = "here"
+	m.saveNote()
+	if notes.items[0].Match != "unique text" {
+		t.Fatalf("match = %q", notes.items[0].Match)
+	}
+	// a line that occurs twice gets no match: the number stays authoritative
+	m2 := noteModel(t, []string{"x", "x"}, []string{"x", "x"})
+	m2.setCursor(1)
+	m2.startNote()
+	m2.noteText = "dup"
+	m2.saveNote()
+	if notes.items[0].Match != "" || notes.items[0].NewLine != 2 {
+		t.Fatalf("ambiguous line must not record a match: %+v", notes.items[0])
+	}
+}
+
+func TestDefaultNotesPath(t *testing.T) {
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	defer os.Chdir(wd)
+	os.Chdir(dir)
+	if p := defaultNotesPath(); p != "" {
+		t.Fatalf("no sidecar yet, got %q", p)
+	}
+	os.WriteFile(filepath.Join(dir, ".difftool-notes.json"), []byte(`{"comments":[]}`), 0o644)
+	if p := defaultNotesPath(); filepath.Base(p) != ".difftool-notes.json" {
+		t.Fatalf("sidecar in cwd must be found, got %q", p)
 	}
 }
