@@ -81,7 +81,12 @@ func configPath() string {
 	return filepath.Join(dir, "difftool", "config.json")
 }
 
-func loadConfig() { loadConfigFrom(configPath()) }
+// cfgPath is where the config lives; tests point it at a temp dir so that
+// saveConfig, which several code paths call as a side effect, never touches
+// the real file.
+var cfgPath = configPath()
+
+func loadConfig() { loadConfigFrom(cfgPath) }
 
 func loadConfigFrom(path string) {
 	if path == "" {
@@ -101,7 +106,7 @@ func loadConfigFrom(path string) {
 	}
 }
 
-func saveConfig() error { return saveConfigTo(configPath()) }
+func saveConfig() error { return saveConfigTo(cfgPath) }
 
 func saveConfigTo(path string) error {
 	if path == "" {
