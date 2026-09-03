@@ -544,6 +544,9 @@ func noteTitle(n *note) string {
 	}
 	start, right := n.line()
 	if start == 0 {
+		if n.Match != "" {
+			return who + " · text not found"
+		}
 		return who + " · file"
 	}
 	where := fmt.Sprintf("L%d", start)

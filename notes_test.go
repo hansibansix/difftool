@@ -389,6 +389,9 @@ func TestMatchAnchorsWinOverLineNumbers(t *testing.T) {
 		got = append(got, fmt.Sprintf("%d/%d/%d", n.NewLine, n.OldLine, n.EndLine))
 	}
 	want := []string{"3/0/0", "3/0/4", "5/0/0", "2/0/0", "0/2/0"}
+	if lost := (&note{Match: "gone"}); noteTitle(lost) != "note · text not found" {
+		t.Fatalf("an unanchored match must say so: %q", noteTitle(lost))
+	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("anchors = %v, want %v", got, want)
