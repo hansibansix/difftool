@@ -170,9 +170,9 @@ file is watched, the tree refreshes on the next selection.
 
 On quit difftool prints `difftool: review closed · N notes from you · M
 resolved` on stderr. `difftool-review` (a bash script, needs a running
-[herdr](https://herdr.dev) session) builds the agent loop on that: it opens
-difftool in a new herdr tab, blocks until that line appears, closes the tab
-and prints the line. An agent runs it in the background after writing its
+[herdr](https://herdr.dev) session) builds the agent loop: it opens
+difftool in a new herdr tab, blocks until the difftool process is gone,
+closes the tab and prints a summary of the sidecar. An agent runs it in the background after writing its
 notes, is woken when you quit, and reads your notes right away.
 
 ## Ignore patterns

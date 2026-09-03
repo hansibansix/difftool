@@ -6,8 +6,8 @@
 #   difftool-review              # working tree vs HEAD, notes auto-detected
 #   difftool-review -git HEAD~3
 #
-# Prints difftool's closing summary line and exits 0 when the review closed,
-# non-zero when herdr is unavailable or the tab could not be driven.
+# Prints a one-line summary of the sidecar and exits 0 when the review
+# closed, non-zero when herdr is unavailable or difftool did not start.
 set -euo pipefail
 
 if [[ -z "${HERDR_SOCKET_PATH:-}" ]] || ! command -v herdr >/dev/null; then
@@ -23,10 +23,36 @@ read -r tab pane < <(printf '%s' "$created" | python3 -c \
 	'import json,sys; r=json.load(sys.stdin)["result"]; print(r["tab"]["tab_id"], r["root_pane"]["pane_id"])')
 trap 'herdr tab close "$tab" >/dev/null 2>&1 || true' EXIT
 
+# foreground reports the name of the pane's foreground process ("fish",
+# "difftool", ...). The review is tracked through it rather than by
+# scraping the screen: the diff itself may show any marker text.
+foreground() {
+	herdr pane process-info --pane "$pane" 2>/dev/null | python3 -c \
+		'import json,sys; p=json.load(sys.stdin)["result"]["process_info"]["foreground_processes"]; print(p[-1]["name"] if p else "")' 2>/dev/null || true
+}
+
 # the shell prompt takes a moment; typing before it is up loses the command
 herdr pane wait-output --regex '[❯$#] ?$' --source visible --timeout 30000 "$pane" >/dev/null
 herdr pane run "$pane" "difftool $(printf '%q ' "${args[@]}")" >/dev/null
-# blocks until difftool prints its closing line (no timeout: reviews take as long as they take)
-# (source visible: herdr's scrollback snapshots stay empty for panes created over the API)
-herdr pane wait-output --match 'difftool: review closed' --source visible "$pane" >/dev/null
-herdr pane read --source visible "$pane" | grep -o 'difftool: review closed.*' | tail -1
+for _ in $(seq 1 60); do
+	[[ $(foreground) == difftool ]] && break
+	sleep 0.5
+done
+if [[ $(foreground) != difftool ]]; then
+	echo "difftool-review: difftool did not start:" >&2
+	herdr pane read --source visible "$pane" | grep . | tail -5 >&2
+	exit 1
+fi
+while [[ $(foreground) == difftool ]]; do
+	sleep 1
+done
+
+sidecar="$root/.difftool-notes.json"
+[[ -f $sidecar ]] || { echo "review closed · no notes file"; exit 0; }
+python3 - "$sidecar" <<'EOF'
+import json, sys
+notes = json.load(open(sys.argv[1]))["comments"]
+yours = sum(1 for n in notes if n.get("author") == "human" and not n.get("resolved"))
+resolved = sum(1 for n in notes if n.get("resolved"))
+print(f"review closed · {yours} notes from you · {resolved} resolved · {len(notes)} total · {sys.argv[1]}")
+EOF
