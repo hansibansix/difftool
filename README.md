@@ -114,9 +114,9 @@ In git mode the patch uses repo-relative `a/` `b/` paths, so
 ## Agent notes
 
 `-notes file.json` loads remarks in [hunk](https://github.com/modem-dev/hunk)'s
-`--agent-context` format and shows each one as a tinted `✎` row below the
-line it refers to (`}`/`{` jump between them, the tree shows `✎N` per file,
-the scrollbar marks them). An agent that just edited a repo writes the file
+`--agent-context` format and shows each one as a framed box above the line
+it refers to, titled with its author and line (`}`/`{` jump between them,
+the tree shows `✎N` per file, the scrollbar marks them). An agent that just edited a repo writes the file
 before you review:
 
 ```json
@@ -140,8 +140,8 @@ rewritten.
 
 The file is polled once a second: an agent can append notes while the diff
 is open and they appear in place. Move the `▶` line cursor with `j`/`k` (or
-click a line) and press `c`: a composer opens under that line, `enter` adds
-a line, `ctrl+s` saves, `esc` cancels. The note is written into the same
+click a line) and press `c`: a composer box opens above that line, `enter`
+adds a line, `ctrl+s` saves, `esc` cancels. The note is written into the same
 file with `"author": "human"` so the agent can read your feedback
 afterwards. On a note row `c` edits your own note or replies to an agent's
 (a new note on the same line), `C` deletes it. Anchors follow applied and

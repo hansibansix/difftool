@@ -58,7 +58,7 @@ func TestNoteRowsPlacement(t *testing.T) {
 			got = append(got, "-"+m.left[r.l])
 		}
 	}
-	want := []string{"file level", "a", "B", "on old b", "c", "on c", "d"}
+	want := []string{"file level", "a", "on old b", "B", "on c", "c", "d"}
 	if len(got) != len(want) {
 		t.Fatalf("rows = %v", got)
 	}
@@ -83,8 +83,8 @@ func TestNotesShiftWithApplyAndUndo(t *testing.T) {
 	}
 	for i, r := range m.rows {
 		if r.note == 1 { // the "on c" note
-			if prev := m.rows[i-1]; prev.r < 0 || m.right[prev.r] != "c" {
-				t.Fatalf("note must still follow line c, got row %+v", prev)
+			if next := m.rows[i+1]; next.r < 0 || m.right[next.r] != "c" {
+				t.Fatalf("note must still introduce line c, got row %+v", next)
 			}
 		}
 	}
@@ -106,8 +106,8 @@ func TestFoldKeepsNotedLine(t *testing.T) {
 	m := noteModel(t, left, right, note{FilePath: "f.txt", NewLine: 25, Summary: "deep in the fold"})
 	for i, r := range m.rows {
 		if r.note > 0 {
-			if prev := m.rows[i-1]; prev.fold > 0 || prev.r != 24 {
-				t.Fatalf("note must sit below its unfolded line, got %+v", prev)
+			if next := m.rows[i+1]; next.fold > 0 || next.r != 24 {
+				t.Fatalf("note must sit above its unfolded line, got %+v", next)
 			}
 			return
 		}
@@ -118,8 +118,8 @@ func TestFoldKeepsNotedLine(t *testing.T) {
 func TestVisualSkipsNoteRows(t *testing.T) {
 	m := noteModel(t, []string{"a", "b", "c", "d", "e"}, []string{"a", "B", "C", "D", "e"},
 		note{FilePath: "f.txt", NewLine: 2, Summary: "on B"})
-	first, last := m.chunkRows()
-	if first != 1 || last != 4 || m.rows[last].r != 3 {
+	first, last := m.chunkRows() // rows: a, note, B, C, D, e
+	if first != 2 || last != 4 || m.rows[last].r != 3 {
 		t.Fatalf("chunkRows = %d..%d (%+v)", first, last, m.rows[last])
 	}
 	m.visual, m.vAnchor, m.vCur = true, first, first
@@ -127,7 +127,7 @@ func TestVisualSkipsNoteRows(t *testing.T) {
 	if m.rows[m.vCur].note > 0 || m.rows[m.vCur].r != 2 {
 		t.Fatalf("visual cursor must skip the note row: %+v", m.rows[m.vCur])
 	}
-	m.applySelection(true) // B,C selected via rows 1..3 -> two lines
+	m.applySelection(true) // B,C selected via rows 2..3 -> two lines
 	want := []string{"a", "b", "c", "D", "e"}
 	for i := range want {
 		if m.right[i] != want[i] {
@@ -175,13 +175,12 @@ func TestAddNoteWritesSidecarAndReloads(t *testing.T) {
 	if len(m.noteRows()) != 2 {
 		t.Fatalf("note rows after reload = %d", len(m.noteRows()))
 	}
-	// } lands on the next note row after the cursor; c there edits our own note
+	// rows: agent note (above a), a, our note (above B), B
 	m.setCursor(0)
-	m.gotoNote(1)
-	if r := m.rows[m.curRow]; r.note == 0 || m.notes[r.note-1].Summary != "agent reply" {
-		t.Fatalf("first jump must reach the note under line 1, got %+v", r)
+	if r := m.rows[0]; r.note == 0 || m.notes[r.note-1].Summary != "agent reply" {
+		t.Fatalf("the agent note must sit above line 1, got %+v", r)
 	}
-	m.gotoNote(1)
+	m.gotoNote(1) // } lands on our note; c there edits it
 	m.startNote()
 	if m.noteEdit == nil || m.noteText != "use get_string here" {
 		t.Fatalf("c on an own note must edit it: edit=%v text=%q", m.noteEdit, m.noteText)
@@ -196,11 +195,12 @@ func TestAddNoteWritesSidecarAndReloads(t *testing.T) {
 	if len(notes.items) != 1 || len(m.noteRows()) != 1 {
 		t.Fatalf("delete: %d items, %d rows", len(notes.items), len(m.noteRows()))
 	}
-	// c on an agent note replies: a new note on the same anchor
+	// c on an agent note replies: a new note on the same anchor, composed
+	// right above the code line
 	m.gotoNote(1)
 	m.startNote()
-	if m.noteEdit != nil || m.noteAnchor != [2]int{1, 0} {
-		t.Fatalf("reply: edit=%v anchor=%v", m.noteEdit, m.noteAnchor)
+	if m.noteEdit != nil || m.noteAnchor != [2]int{1, 0} || m.rows[m.noteRow].r != 0 {
+		t.Fatalf("reply: edit=%v anchor=%v row=%+v", m.noteEdit, m.noteAnchor, m.rows[m.noteRow])
 	}
 }
 

@@ -980,6 +980,9 @@ func (m *model) view(focused bool) string {
 			}
 			continue
 		}
+		if m.noteInput && m.noteEdit == nil && i == m.noteRow {
+			wide(m.composerLines(m.w - 2))
+		}
 		if r.fold > 0 {
 			mark := " "
 			if i == m.curRow {
@@ -1047,9 +1050,6 @@ func (m *model) view(focused bool) string {
 					m.renderSide(r, false, paneW, gutW, isCur, sb2, hlR, k) + pad + sb + "\n")
 			}
 			lines++
-		}
-		if m.noteInput && m.noteEdit == nil && i == m.noteRow {
-			wide(m.composerLines(m.w - 2))
 		}
 	}
 

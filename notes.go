@@ -151,9 +151,10 @@ func (m *model) hasNote(l, r int) bool {
 	return false
 }
 
-// insertNoteRows places a note row after the row of each note's line;
-// unanchored notes go to the top, notes past the end of the file to the
-// bottom. Nav targets are re-pointed at their shifted rows.
+// insertNoteRows places a note row above the row of each note's line (as
+// hunk does: the note introduces the code it talks about); unanchored notes
+// go to the top, notes past the end of the file to the bottom. Nav targets
+// are re-pointed at their shifted rows.
 func (m *model) insertNoteRows() {
 	if len(m.notes) == 0 {
 		return
@@ -169,18 +170,17 @@ func (m *model) insertNoteRows() {
 	}
 	newIdx := make([]int, len(m.rows))
 	for i, r := range m.rows {
-		newIdx[i] = len(out)
-		out = append(out, r)
 		ci = r.ci
-		if r.fold > 0 {
-			continue
-		}
-		for k := range m.notes {
-			if !placed[k] && m.anchoredAt(k, r) {
-				out = append(out, row{l: -1, r: -1, ci: ci, note: k + 1})
-				placed[k] = true
+		if r.fold == 0 {
+			for k := range m.notes {
+				if !placed[k] && m.anchoredAt(k, r) {
+					out = append(out, row{l: -1, r: -1, ci: ci, note: k + 1})
+					placed[k] = true
+				}
 			}
 		}
+		newIdx[i] = len(out)
+		out = append(out, r)
 	}
 	for k := range m.notes {
 		if !placed[k] {
@@ -289,6 +289,10 @@ func (m *model) startNote() {
 			m.noteEdit, m.noteText = n, n.Summary
 		}
 		m.noteAnchor = [2]int{n.NewLine, n.OldLine}
+		// a reply is drawn above the code line, i.e. below the existing notes
+		for m.noteRow+1 < len(m.rows) && m.rows[m.noteRow].note > 0 {
+			m.noteRow++
+		}
 	case r.fold > 0:
 		m.status = "click the fold to expand it, then annotate a line"
 		return
@@ -351,45 +355,61 @@ func (m *model) deleteNote() {
 	m.recompute()
 }
 
-// composerLines draws the note being written across w cells: the draft
-// with a cursor, wrapped like a saved note, plus a key hint line.
-func (m *model) composerLines(w int) []string {
-	body := lipgloss.NewStyle().Width(max(1, w-3)).Render("✎ you: " + m.noteText + "▏")
-	var out []string
-	for _, l := range strings.Split(body, "\n") {
-		out = append(out, styleNoteHumanCur.Render("▎ "+l+" "))
-	}
-	hintL := lipgloss.NewStyle().Width(max(1, w-3)).Render("ctrl+s save · enter new line · esc cancel")
-	return append(out, styleNoteHint.Render("▎ "+hintL+" "))
-}
-
-// noteLines renders note row r across w cells, wrapped, with a bar on the
-// left tying it to the line above; human notes get their own color and
-// "you:" so the two directions of the exchange stay apart. cur highlights.
-func (m *model) noteLines(r row, w int, cur bool) []string {
-	n := m.notes[r.note-1]
-	st, label := styleNote, "✎ "
+// noteTitle names a note for its box: who wrote it and which line it is on.
+func noteTitle(n *note) string {
+	who := "note"
 	switch n.Author {
 	case "":
 	case "human":
-		st, label = styleNoteHuman, "✎ you: "
+		who = "your note"
 	default:
-		label += n.Author + ": "
+		who = n.Author + " note"
+	}
+	switch {
+	case n.NewLine > 0:
+		return fmt.Sprintf("%s · L%d", who, n.NewLine)
+	case n.OldLine > 0:
+		return fmt.Sprintf("%s · old L%d", who, n.OldLine)
+	}
+	return who + " · file"
+}
+
+// noteBox draws a rounded frame across w cells with the title in the top
+// border and hint in the bottom one, the body wrapped inside.
+func noteBox(title, body, hint string, border, text lipgloss.Style, w int) []string {
+	inner := max(1, w-5) // " ╭" + "│ " … " │"
+	fill := func(s string) string { return strings.Repeat("─", max(0, inner+2-lipgloss.Width(s))) }
+	out := []string{border.Render(" ╭─ " + title + " " + fill(" "+title+" ") + "╮")}
+	for _, l := range strings.Split(lipgloss.NewStyle().Width(inner).Render(body), "\n") {
+		out = append(out, border.Render(" │ ")+text.Render(l)+border.Render(" │"))
+	}
+	bottom := " ╰" + fill("") + "╯"
+	if hint != "" {
+		bottom = " ╰─ " + hint + " " + fill(" "+hint+" ") + "╯"
+	}
+	return append(out, border.Render(bottom))
+}
+
+// noteLines renders note row r across w cells as a box; cur highlights it.
+func (m *model) noteLines(r row, w int, cur bool) []string {
+	n := m.notes[r.note-1]
+	border, text := styleNote, styleNoteText
+	if n.Author == "human" {
+		border = styleNoteHuman
 	}
 	if cur {
-		st = styleNoteCur
-		if n.Author == "human" {
-			st = styleNoteHumanCur
-		}
+		border, text = border.Bold(true), styleNoteTextCur
 	}
-	if n.NewLine == 0 && n.OldLine == 0 {
-		label += "file · "
+	return noteBox(noteTitle(n), n.Summary, "", border, text, w)
+}
+
+// composerLines draws the note being written as a box: the draft with a
+// cursor and the editing keys in the bottom border.
+func (m *model) composerLines(w int) []string {
+	title := "your note"
+	if m.noteEdit != nil {
+		title = "editing " + noteTitle(m.noteEdit)
 	}
-	// lipgloss wraps at word boundaries and pads every line to the width
-	body := lipgloss.NewStyle().Width(max(1, w-3)).Render(label + n.Summary)
-	var out []string
-	for _, l := range strings.Split(body, "\n") {
-		out = append(out, st.Render("▎ "+l+" "))
-	}
-	return out
+	return noteBox(title, m.noteText+"▏", "ctrl+s save · enter new line · esc cancel",
+		styleNoteHuman.Bold(true), styleNoteTextCur, w)
 }

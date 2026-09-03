@@ -156,7 +156,7 @@ var (
 	styleStModified, styleStOnlyLeft, styleStOnlyRight, styleStSame            lipgloss.Style
 	styleGroup                                                                 lipgloss.Style
 	styleSelected                                                              lipgloss.Style
-	styleNote, styleNoteCur, styleNoteHuman, styleNoteHumanCur, styleNoteHint  lipgloss.Style
+	styleNote, styleNoteHuman, styleNoteText, styleNoteTextCur                 lipgloss.Style
 )
 
 func initStyles(t theme) {
@@ -209,11 +209,10 @@ func initStyles(t theme) {
 	styleStApplied = fgbg(t.stApplied, "")
 	styleSelected = fgbg(t.text, t.selBg)
 	styleGroup = fgbg(t.subtle, "").Bold(true)
-	styleNote = fgbg(t.accent, t.voidBg).Italic(true)
-	styleNoteCur = fgbg(t.accent, t.selBg).Italic(true)
-	styleNoteHuman = fgbg(t.appliedFg, t.voidBg).Italic(true)
-	styleNoteHumanCur = fgbg(t.appliedFg, t.selBg).Italic(true)
-	styleNoteHint = fgbg(t.muted, t.selBg)
+	styleNote = fgbg(t.accent, "")
+	styleNoteHuman = fgbg(t.appliedFg, "")
+	styleNoteText = fgbg(t.text, "")
+	styleNoteTextCur = fgbg(t.text, t.selBg)
 }
 
 // hdrStyles bundles the header bar styles for one focus state.
