@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // noteModel builds a model whose notes come from items (store path is
@@ -295,5 +297,19 @@ func TestResolveToggle(t *testing.T) {
 	m.toggleResolved()
 	if m.notes[0].Resolved {
 		t.Fatal("toggle must reopen")
+	}
+}
+
+func TestNoteBoxWidth(t *testing.T) {
+	for _, w := range []int{20, 57, 108} {
+		for _, hint := range []string{"", "ctrl+s save · esc cancel"} {
+			lines := noteBox("your note · L42-47", "some text that is long enough to wrap around in a narrow box", hint,
+				lipgloss.NewStyle(), lipgloss.NewStyle(), w)
+			for i, l := range lines {
+				if lipgloss.Width(l) != w {
+					t.Fatalf("w=%d hint=%q line %d is %d wide: %q", w, hint, i, lipgloss.Width(l), l)
+				}
+			}
+		}
 	}
 }

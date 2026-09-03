@@ -482,15 +482,19 @@ func noteTitle(n *note) string {
 // noteBox draws a rounded frame across w cells with the title in the top
 // border and hint in the bottom one, the body wrapped inside.
 func noteBox(title, body, hint string, border, text lipgloss.Style, w int) []string {
-	inner := max(1, w-5) // " ╭" + "│ " … " │"
-	fill := func(s string) string { return strings.Repeat("─", max(0, inner+2-lipgloss.Width(s))) }
-	out := []string{border.Render(" ╭─ " + title + " " + fill(" "+title+" ") + "╮")}
+	inner := max(1, w-5) // " │ " + text + " │"
+	// a labelled border is " ╭─ " + label + " " + dashes + "╮": w-6-label cells of dashes
+	labelled := func(l, r, label string) string {
+		label = runewidth.Truncate(label, max(0, w-6), "…")
+		return " " + l + "─ " + label + " " + strings.Repeat("─", max(0, w-6-lipgloss.Width(label))) + r
+	}
+	out := []string{border.Render(labelled("╭", "╮", title))}
 	for _, l := range strings.Split(lipgloss.NewStyle().Width(inner).Render(body), "\n") {
 		out = append(out, border.Render(" │ ")+text.Render(l)+border.Render(" │"))
 	}
-	bottom := " ╰" + fill("") + "╯"
+	bottom := " ╰" + strings.Repeat("─", max(0, w-3)) + "╯"
 	if hint != "" {
-		bottom = " ╰─ " + hint + " " + fill(" "+hint+" ") + "╯"
+		bottom = labelled("╰", "╯", hint)
 	}
 	return append(out, border.Render(bottom))
 }
