@@ -87,8 +87,9 @@ Applied chunks stay tinted with a `▶`/`◀` arrow showing the copy direction,
 remain reachable with `n`/`p`, and the view does not jump on apply.
 Files made equal during the session stay listed as `✓ applied` in the
 directory view.
-The directory list groups files by folder with colored status glyphs and a
-per-file diffstat (`+12 −3`). Mouse: click a file or hunk to select it,
+The directory list groups files by folder with file icons, a status label
+and a per-file diffstat (`+12 −3`); below 50 columns the label gives way
+and the file name takes the status color. Mouse: click a file or hunk to select it,
 click a pane to focus it, the wheel scrolls the pane under the pointer.
 
 ## Settings
@@ -97,7 +98,7 @@ click a pane to focus it, the wheel scrolls the pane under the pointer.
 `,` opens the settings menu in any view: theme, syntax + intraline highlight,
 line wrap, unified view, folding, ignore whitespace, ignore blank-line
 changes, ignore lines matching a regex, tab width, show identical files,
-ignore patterns on/off.
+file icons in the tree (Nerd Font; turn off without one), ignore patterns on/off.
 Changes apply live and are saved to `~/.config/difftool/config.json` on close.
 
 Ignore rules: with *ignore blank-line changes* a hunk made only of blank

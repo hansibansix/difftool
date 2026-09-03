@@ -25,6 +25,7 @@ type config struct {
 	IgnorePatterns []string `json:"ignore_patterns"`
 	UseIgnores     bool     `json:"use_ignores"`
 	Fold           bool     `json:"fold"`
+	Icons          bool     `json:"icons"` // Nerd Font file icons in the tree
 	Unified        bool     `json:"unified"`
 	IgnoreBlank    bool     `json:"ignore_blank_lines"`
 	IgnoreRegex    string   `json:"ignore_regex"`
@@ -61,7 +62,7 @@ var cfg = defaultConfig()
 func defaultConfig() config {
 	return config{
 		Theme: "rose-pine", Intraline: true, TabWidth: 4,
-		UseIgnores: true, Syntax: true, ShowTree: true,
+		UseIgnores: true, Syntax: true, ShowTree: true, Icons: true,
 		IgnorePatterns: []string{
 			"node_modules", "vendor", // dependency trees
 			".svn", ".hg", // VCS metadata (.git is always skipped)
@@ -226,6 +227,9 @@ func (a *app) menuItems() []menuItem {
 		}, nil},
 		{"tree pane", func() string { return onOff(cfg.ShowTree) }, func(int) {
 			a.toggleTree()
+		}, nil},
+		{"file icons (Nerd Font)", func() string { return onOff(cfg.Icons) }, func(int) {
+			cfg.Icons = !cfg.Icons
 		}, nil},
 		{"ignore patterns · enter edits", ignoreSummary, func(int) {
 			cfg.UseIgnores = !cfg.UseIgnores

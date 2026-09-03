@@ -41,23 +41,6 @@ func (s dirStatus) label() string {
 	return "same"
 }
 
-// glyph arrows point toward the side the file exists on
-func (s dirStatus) glyph() string {
-	switch s {
-	case stModified:
-		return "●"
-	case stOnlyLeft:
-		return "◂"
-	case stOnlyRight:
-		return "▸"
-	case stApplied:
-		return "✓"
-	case stDeleted:
-		return "✕"
-	}
-	return "·"
-}
-
 func (s dirStatus) style() lipgloss.Style {
 	switch s {
 	case stModified:
@@ -616,14 +599,18 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 		}
 		r := d.rows[i]
 		if r.header != "" {
-			b.WriteString("  " + styleGroup.Render(truncLeft(r.header, max(4, d.w-10))) +
+			folder := ""
+			if cfg.Icons {
+				folder = lipgloss.NewStyle().Foreground(lipgloss.Color(iconFolder.color)).Render(iconFolder.glyph + " ")
+			}
+			b.WriteString("  " + folder + styleGroup.Render(truncLeft(r.header, max(4, d.w-12))) +
 				styleStSame.Render(fmt.Sprintf(" · %d", r.n)) + "\n")
 			continue
 		}
 		e := &d.entries[r.ei]
 		label := e.status.label()
 		stat := ""
-		if d.w < 50 { // narrow tree pane: the glyph color carries the status
+		if d.w < 50 { // narrow tree pane: the name color carries the status
 			label = ""
 		} else {
 			if !e.hasStat {
@@ -643,14 +630,23 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 				mark = styleGutter.Render("▌")
 			}
 		}
+		if label == "" { // no label: the name carries the status color
+			nameSt = st
+		}
 		statW := 0
 		if stat != "" {
 			statW = runewidth.StringWidth(stat) + 2
 		}
-		nameW := max(4, d.w-4-2-runewidth.StringWidth(label)-3-statW)
+		nameW := max(4, d.w-4-1-runewidth.StringWidth(label)-3-statW)
 		unsaved := ""
 		if e.rel == dirtyRel {
 			unsaved = " *"
+			nameW -= 2
+		}
+		icon := ""
+		if cfg.Icons {
+			ic := fileIcon(e.rel)
+			icon = pad.Foreground(lipgloss.Color(ic.color)).Render(" " + ic.glyph)
 			nameW -= 2
 		}
 		name := runewidth.Truncate(filepath.Base(e.rel), nameW, "…")
@@ -661,7 +657,7 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 			statStr = styleStOnlyRight.Background(pad.GetBackground()).Render(plus) + pad.Render(" ") +
 				styleStOnlyLeft.Background(pad.GetBackground()).Render(minus) + pad.Render("  ")
 		}
-		b.WriteString(mark + pad.Render("   ") + st.Render(e.status.glyph()) +
+		b.WriteString(mark + pad.Render("  ") + icon +
 			nameSt.Render(" "+name) + styleMark.Render(unsaved) + nameSt.Render(gap) +
 			statStr + st.Render(label) + pad.Render(" ") + "\n")
 	}
