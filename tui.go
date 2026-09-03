@@ -29,7 +29,7 @@ type snapshot struct {
 	cur         int
 	applied     []appliedRegion
 	side        int      // merge mode: which input was shown on the left
-	anchors     [][2]int // note anchors, which apply/reset shift
+	anchors     [][3]int // note anchors (new, old, end), which apply/reset shift
 }
 
 // appliedRegion remembers a chunk that was applied this session: both sides
@@ -104,6 +104,7 @@ type model struct {
 	noteText   string
 	noteRow    int
 	noteAnchor [2]int // newLine, oldLine
+	noteEnd    int    // last line of a range note being written (0 = single line)
 	noteEdit   *note
 }
 
@@ -751,9 +752,7 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			case "up":
 				m.moveVisual(-1, first, last)
 			case "note":
-				m.visual = false
-				m.curRow = m.vCur
-				m.startNote()
+				m.startRangeNote(min(m.vAnchor, m.vCur), max(m.vAnchor, m.vCur))
 			case "apply-right":
 				m.applySelection(true)
 			case "apply-left":
@@ -862,6 +861,8 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.startNote()
 		case "note-delete":
 			m.deleteNote()
+		case "note-resolve":
+			m.toggleResolved()
 		case "search-prev":
 			if m.search != "" {
 				m.gotoMatch(-1)
@@ -1061,7 +1062,16 @@ func (m *model) view(focused bool) string {
 		info += fmt.Sprintf(" · %d ignored", n)
 	}
 	if n := len(m.notes); n > 0 {
+		open := 0
+		for _, x := range m.notes {
+			if !x.Resolved {
+				open++
+			}
+		}
 		info += fmt.Sprintf(" · %d notes", n)
+		if open < n {
+			info += fmt.Sprintf(", %d open", open)
+		}
 		for k, ri := range m.noteRows() {
 			if ri == m.curRow {
 				info += fmt.Sprintf(" (%d)", k+1)
@@ -1101,10 +1111,12 @@ func (m *model) view(focused bool) string {
 	if notes.path != "" {
 		onNote := len(m.rows) > 0 && m.rows[m.curRow].note > 0
 		switch {
+		case onNote && m.notes[m.rows[m.curRow].note-1].Resolved:
+			hints = append(hints, [2]string{fk.first("note-resolve"), "reopen"}, [2]string{fk.first("note-delete"), "delete"})
 		case onNote && m.notes[m.rows[m.curRow].note-1].Author == "human":
-			hints = append(hints, [2]string{fk.first("note"), "edit note"}, [2]string{fk.first("note-delete"), "delete"})
+			hints = append(hints, [2]string{fk.first("note"), "edit note"}, [2]string{fk.first("note-resolve"), "resolve"}, [2]string{fk.first("note-delete"), "delete"})
 		case onNote:
-			hints = append(hints, [2]string{fk.first("note"), "reply"}, [2]string{fk.first("note-delete"), "dismiss"})
+			hints = append(hints, [2]string{fk.first("note"), "reply"}, [2]string{fk.first("note-resolve"), "resolve"}, [2]string{fk.first("note-delete"), "dismiss"})
 		default:
 			hints = append(hints, [2]string{fk.first("note"), "note"})
 		}
@@ -1284,6 +1296,9 @@ func (m *model) renderSide(r row, isLeft bool, paneW, gutW int, cur bool, spans,
 	}
 	txt := expandTabs(lines[idx])
 	base, emph, gutSt := m.rowStyles(r, isLeft, cur)
+	if n := m.noteAt(idx, !isLeft); n != nil {
+		gutSt = noteStyle(n).Bold(true)
+	}
 	var fgs []fgSpan
 	if isLeft {
 		if idx < len(m.leftFgs) {
@@ -1347,6 +1362,9 @@ func (m *model) renderUnified(r row, gutW, textW int, cur bool, hlL, hlR []span,
 		idx, lines, fgs, hl = r.l, m.left, m.leftFgs, hlL
 	}
 	base, emph, gutSt := m.rowStyles(r, isLeft, cur)
+	if n := m.noteAt(idx, !isLeft); n != nil {
+		gutSt = noteStyle(n).Bold(true)
+	}
 	num := func(i int) string {
 		if i < 0 {
 			return strings.Repeat(" ", gutW)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -234,5 +235,65 @@ func TestNoteOnDeletionAnchorsOldLine(t *testing.T) {
 	m.saveNote()
 	if n := notes.items[0]; n.NewLine != 0 || n.OldLine != 2 {
 		t.Fatalf("deletion note must anchor on the old line: %+v", n)
+	}
+}
+
+func TestRangeNoteFromVisualAndShift(t *testing.T) {
+	m := noteModel(t, []string{"a", "b", "c", "d", "e"}, []string{"a", "B", "C", "D", "e"})
+	m.setCursor(1) // B
+	m.visual, m.vAnchor, m.vCur = true, 1, 3
+	m.startRangeNote(1, 3)
+	if !m.noteInput || m.noteAnchor != [2]int{2, 2} || m.noteEnd != 4 {
+		t.Fatalf("range composer: anchor=%v end=%d", m.noteAnchor, m.noteEnd)
+	}
+	m.noteText = "these three"
+	m.saveNote()
+	n := notes.items[0]
+	if n.NewLine != 2 || n.EndLine != 4 || !strings.Contains(noteTitle(&n), "L2-4") {
+		t.Fatalf("saved range: %+v title %q", n, noteTitle(&n))
+	}
+	// covered lines are tinted, others not; the left side never is
+	if m.noteAt(1, true) == nil || m.noteAt(3, true) == nil || m.noteAt(4, true) != nil || m.noteAt(2, false) != nil {
+		t.Fatal("covers() must span exactly lines 2-4 on the right")
+	}
+	// the note sits above line 2 only
+	if rows := m.noteRows(); len(rows) != 1 || m.rows[rows[0]+1].r != 1 {
+		t.Fatalf("range note must anchor once, above its first line: %v", rows)
+	}
+	// applying a hunk above shifts start and end together; undo restores both
+	m2 := noteModel(t, []string{"a", "b", "c", "d"}, []string{"a", "X", "Y", "c", "d"},
+		note{FilePath: "f.txt", NewLine: 4, EndLine: 5, Summary: "c-d"})
+	m2.apply(true)
+	if m2.notes[0].NewLine != 3 || m2.notes[0].EndLine != 4 {
+		t.Fatalf("shift: %+v", m2.notes[0])
+	}
+	m2.undoLast()
+	if m2.notes[0].NewLine != 4 || m2.notes[0].EndLine != 5 {
+		t.Fatalf("undo: %+v", m2.notes[0])
+	}
+}
+
+func TestResolveToggle(t *testing.T) {
+	m := noteModel(t, []string{"a", "b"}, []string{"a", "B"},
+		note{FilePath: "f.txt", NewLine: 2, Summary: "check this\nsecond line"})
+	m.gotoNote(1)
+	if len(m.noteLines(m.rows[m.curRow], 60, false)) < 3 {
+		t.Fatal("an open note renders as a box")
+	}
+	m.toggleResolved()
+	n := m.notes[0]
+	if !n.Resolved || len(m.noteLines(m.rows[m.curRow], 60, false)) != 1 || noteCount("f.txt") != 0 {
+		t.Fatalf("resolved: %+v lines=%d open=%d", n, len(m.noteLines(m.rows[m.curRow], 60, false)), noteCount("f.txt"))
+	}
+	if m.noteAt(1, true) != nil {
+		t.Fatal("resolved notes must not tint line numbers")
+	}
+	data, _ := os.ReadFile(notes.path)
+	if !strings.Contains(string(data), `"resolved": true`) {
+		t.Fatalf("resolved flag must be persisted: %s", data)
+	}
+	m.toggleResolved()
+	if m.notes[0].Resolved {
+		t.Fatal("toggle must reopen")
 	}
 }

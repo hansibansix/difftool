@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 )
 
 // Agent notes: a sidecar JSON file in hunk's --agent-context format
@@ -23,6 +24,25 @@ type note struct {
 	OldLine  int    `json:"oldLine,omitempty"` // 1-based line of the left side
 	Summary  string `json:"summary"`
 	Author   string `json:"author,omitempty"`
+	// difftool extensions to hunk's format: a range ends at endLine on the
+	// anchored side; resolved notes collapse to one line
+	EndLine  int  `json:"endLine,omitempty"`
+	Resolved bool `json:"resolved,omitempty"`
+}
+
+// line returns the anchor line and whether it is on the right side.
+func (n *note) line() (int, bool) {
+	if n.NewLine > 0 {
+		return n.NewLine, true
+	}
+	return n.OldLine, false
+}
+
+// covers reports whether the note's line range includes 1-based line ln on
+// the given side.
+func (n *note) covers(ln int, right bool) bool {
+	start, r := n.line()
+	return start > 0 && r == right && ln >= start && ln <= max(start, n.EndLine)
 }
 
 type noteFile struct {
@@ -114,7 +134,16 @@ func notesFor(key string) []*note {
 	return out
 }
 
-func noteCount(key string) int { return len(notesFor(key)) }
+// noteCount counts the open (unresolved) notes of a file.
+func noteCount(key string) int {
+	n := 0
+	for _, x := range notesFor(key) {
+		if !x.Resolved {
+			n++
+		}
+	}
+	return n
+}
 
 // notePath is the filePath the notes of this file are matched against and
 // written with: the tree's relative path in dir mode, else the patch name.
@@ -197,6 +226,10 @@ func (m *model) insertNoteRows() {
 // mirroring shiftApplied, so notes follow an applied or reset hunk.
 func (m *model) shiftNotes(right bool, from, delta int) {
 	for _, n := range m.notes {
+		_, onRight := n.line()
+		if onRight == right && n.EndLine > from {
+			n.EndLine += delta
+		}
 		if right && n.NewLine > from {
 			n.NewLine += delta
 		}
@@ -207,21 +240,51 @@ func (m *model) shiftNotes(right bool, from, delta int) {
 }
 
 // noteAnchors snapshots the anchors for undo.
-func (m *model) noteAnchors() [][2]int {
-	out := make([][2]int, len(m.notes))
+func (m *model) noteAnchors() [][3]int {
+	out := make([][3]int, len(m.notes))
 	for i, n := range m.notes {
-		out[i] = [2]int{n.NewLine, n.OldLine}
+		out[i] = [3]int{n.NewLine, n.OldLine, n.EndLine}
 	}
 	return out
 }
 
-func (m *model) restoreAnchors(a [][2]int) {
+func (m *model) restoreAnchors(a [][3]int) {
 	if len(a) != len(m.notes) {
 		return // the sidecar changed meanwhile; keep what it says
 	}
 	for i, n := range m.notes {
-		n.NewLine, n.OldLine = a[i][0], a[i][1]
+		n.NewLine, n.OldLine, n.EndLine = a[i][0], a[i][1], a[i][2]
 	}
+}
+
+// noteAt returns the first open note whose range covers line idx (0-based)
+// of one side, for tinting its line number.
+func (m *model) noteAt(idx int, right bool) *note {
+	for _, n := range m.notes {
+		if !n.Resolved && n.covers(idx+1, right) {
+			return n
+		}
+	}
+	return nil
+}
+
+// toggleResolved flips the note under the cursor between open and resolved
+// and writes the sidecar.
+func (m *model) toggleResolved() {
+	if len(m.rows) == 0 || m.rows[m.curRow].note == 0 {
+		m.status = "move onto a note (" + hint(keys.file, "next-note", "prev-note") + ") to resolve it"
+		return
+	}
+	n := m.notes[m.rows[m.curRow].note-1]
+	n.Resolved = !n.Resolved
+	if err := saveNotes(); err != nil {
+		m.status = "error: " + err.Error()
+	} else if n.Resolved {
+		m.status = "✓ resolved"
+	} else {
+		m.status = "note reopened"
+	}
+	m.recompute()
 }
 
 // noteRows lists the row indices of note rows, in view order.
@@ -281,7 +344,7 @@ func (m *model) startNote() {
 		return
 	}
 	r := m.rows[m.curRow]
-	m.noteEdit, m.noteText, m.noteRow = nil, "", m.curRow
+	m.noteEdit, m.noteText, m.noteRow, m.noteEnd = nil, "", m.curRow, 0
 	switch {
 	case r.note > 0:
 		n := m.notes[r.note-1]
@@ -305,6 +368,31 @@ func (m *model) startNote() {
 	m.noteInput = true
 }
 
+// startRangeNote opens the composer for the visually selected rows: the
+// note anchors on the first line and ends on the last, on the right side
+// when the selection has any right-hand lines.
+func (m *model) startRangeNote(lo, hi int) {
+	m.visual = false
+	m.curRow = lo
+	m.startNote()
+	if !m.noteInput {
+		return
+	}
+	right := m.noteAnchor[0] > 0
+	for i := hi; i > lo; i-- {
+		if r := m.rows[i]; r.note == 0 {
+			if right && r.r >= 0 {
+				m.noteEnd = r.r + 1
+				return
+			}
+			if !right && r.l >= 0 {
+				m.noteEnd = r.l + 1
+				return
+			}
+		}
+	}
+}
+
 // saveNote stores the draft (new or edited) and writes the sidecar.
 func (m *model) saveNote() {
 	m.noteInput = false
@@ -321,6 +409,9 @@ func (m *model) saveNote() {
 			n.NewLine = m.noteAnchor[0]
 		} else {
 			n.OldLine = m.noteAnchor[1]
+		}
+		if m.noteEnd > max(n.NewLine, n.OldLine) {
+			n.EndLine = m.noteEnd
 		}
 		notes.items = append(notes.items, n)
 	}
@@ -355,6 +446,15 @@ func (m *model) deleteNote() {
 	m.recompute()
 }
 
+// noteStyle is the border color of a note: accent for agents, the applied
+// color for yours.
+func noteStyle(n *note) lipgloss.Style {
+	if n.Author == "human" {
+		return styleNoteHuman
+	}
+	return styleNote
+}
+
 // noteTitle names a note for its box: who wrote it and which line it is on.
 func noteTitle(n *note) string {
 	who := "note"
@@ -365,13 +465,18 @@ func noteTitle(n *note) string {
 	default:
 		who = n.Author + " note"
 	}
-	switch {
-	case n.NewLine > 0:
-		return fmt.Sprintf("%s · L%d", who, n.NewLine)
-	case n.OldLine > 0:
-		return fmt.Sprintf("%s · old L%d", who, n.OldLine)
+	start, right := n.line()
+	if start == 0 {
+		return who + " · file"
 	}
-	return who + " · file"
+	where := fmt.Sprintf("L%d", start)
+	if !right {
+		where = "old " + where
+	}
+	if n.EndLine > start {
+		where += fmt.Sprintf("-%d", n.EndLine)
+	}
+	return who + " · " + where
 }
 
 // noteBox draws a rounded frame across w cells with the title in the top
@@ -391,8 +496,19 @@ func noteBox(title, body, hint string, border, text lipgloss.Style, w int) []str
 }
 
 // noteLines renders note row r across w cells as a box; cur highlights it.
+// A resolved note collapses to one dim line with the start of its text.
 func (m *model) noteLines(r row, w int, cur bool) []string {
 	n := m.notes[r.note-1]
+	if n.Resolved {
+		first, _, _ := strings.Cut(n.Summary, "\n")
+		label := " ✓ " + noteTitle(n) + " · " + first
+		st := styleFold
+		if cur {
+			st = styleNoteTextCur
+		}
+		return []string{st.Render(runewidth.Truncate(label, max(1, w-1), "…") +
+			strings.Repeat(" ", max(0, w-1-runewidth.StringWidth(label))))}
+	}
 	border, text := styleNote, styleNoteText
 	if n.Author == "human" {
 		border = styleNoteHuman
@@ -409,6 +525,8 @@ func (m *model) composerLines(w int) []string {
 	title := "your note"
 	if m.noteEdit != nil {
 		title = "editing " + noteTitle(m.noteEdit)
+	} else if m.noteEnd > 0 {
+		title = noteTitle(&note{Author: "human", NewLine: m.noteAnchor[0], OldLine: m.noteAnchor[1], EndLine: m.noteEnd})
 	}
 	return noteBox(title, m.noteText+"▏", "ctrl+s save · enter new line · esc cancel",
 		styleNoteHuman.Bold(true), styleNoteTextCur, w)
