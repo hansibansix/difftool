@@ -80,7 +80,7 @@ type model struct {
 	searchInput bool
 	matches     []int // row indices containing the search term
 	matchIdx    int
-	pendingAll  bool // 'a' pressed, waiting for the direction key
+	ask         *prompt // direction question of apply-all
 
 	// visual mode: a row range inside the current chunk for partial apply
 	visual        bool
@@ -775,15 +775,10 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.top = clamp(m.top, max(0, m.vCur-m.bodyH()+1), min(m.vCur, m.maxTop()))
 			return nil
 		}
-		if m.pendingAll {
-			m.pendingAll = false
-			switch act {
-			case "apply-right":
-				m.applyAll(true)
-			case "apply-left":
-				m.applyAll(false)
-			default:
-				m.status = "apply all cancelled"
+		if p := m.ask; p != nil {
+			m.ask = nil
+			if !p.answer(key, act) {
+				m.status = p.cancel
 			}
 			return nil
 		}
@@ -882,8 +877,8 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.search = ""
 			m.matches = nil
 		case "apply-all":
-			m.pendingAll = true
 			m.status = fmt.Sprintf("apply all: %s ▶ · %s ◀ · other key cancels", keys.file.first("apply-right"), keys.file.first("apply-left"))
+			m.ask = &prompt{direction("apply-right", "apply-left", m.applyAll), "apply all cancelled"}
 		case "reset-all":
 			m.resetAll()
 		case "merge-local", "merge-base", "merge-remote":

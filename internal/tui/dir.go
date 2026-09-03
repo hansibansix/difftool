@@ -107,10 +107,14 @@ type dirModel struct {
 	filter                string
 	filterInput           bool
 	undo                  []copyUndo
-	batch                 int    // id of the current undoable tree operation
-	pendingDelete         string // path awaiting y/n confirmation
-	syncStep              int    // sync all: 1 = awaiting direction, 2 = awaiting y/n
-	syncToRight           bool
+	batch                 int     // id of the current undoable tree operation
+	ask                   *prompt // y/n or direction question in the status line
+}
+
+// prompt shows text in the status line and waits for the answer.
+func (d *dirModel) prompt(text, cancel string, answer func(key, act string) bool) {
+	d.status = text
+	d.ask = &prompt{answer, cancel}
 }
 
 // copyUndo remembers what a tree-level copy overwrote so it can be undone.
@@ -400,8 +404,8 @@ func (d *dirModel) copyEntry(toRight bool) {
 		if !toRight {
 			side = "left"
 		}
-		d.pendingDelete = dst
-		d.status = fmt.Sprintf("delete %s on the %s side? y/n", e.rel, side)
+		d.prompt(fmt.Sprintf("delete %s on the %s side? y/n", e.rel, side), "delete cancelled",
+			yesNo(func() { d.deleteSelected(toRight) }))
 		return
 	}
 	d.batch++
@@ -483,37 +487,14 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 			}
 		}
 	case tea.KeyMsg:
-		if d.pendingDelete != "" {
-			if k := msg.String(); k == "y" || k == "Y" {
-				d.deletePending()
-			} else {
-				d.pendingDelete = ""
-				d.status = "delete cancelled"
-			}
-			return nil
-		}
 		act := keys.dir.action(msg.String())
 		if msg.String() == "ctrl+c" {
 			act = "quit"
 		}
-		if d.syncStep == 1 {
-			switch act {
-			case "copy-right":
-				d.askSync(true)
-			case "copy-left":
-				d.askSync(false)
-			default:
-				d.syncStep = 0
-				d.status = "sync cancelled"
-			}
-			return nil
-		}
-		if d.syncStep == 2 {
-			d.syncStep = 0
-			if k := msg.String(); k == "y" || k == "Y" {
-				d.syncAll(d.syncToRight)
-			} else {
-				d.status = "sync cancelled"
+		if p := d.ask; p != nil {
+			d.ask = nil
+			if !p.answer(msg.String(), act) {
+				d.status = p.cancel
 			}
 			return nil
 		}
@@ -566,8 +547,8 @@ func (d *dirModel) update(msg tea.Msg) tea.Cmd {
 		case "undo":
 			d.undoCopy()
 		case "sync-all":
-			d.syncStep = 1
-			d.status = fmt.Sprintf("sync all listed files: %s ▶ · %s ◀ · other key cancels", keys.dir.first("copy-right"), keys.dir.first("copy-left"))
+			d.prompt(fmt.Sprintf("sync all listed files: %s ▶ · %s ◀ · other key cancels", keys.dir.first("copy-right"), keys.dir.first("copy-left")),
+				"sync cancelled", direction("copy-right", "copy-left", d.askSync))
 		}
 	}
 	return nil

@@ -218,6 +218,9 @@ func (a *app) updateDiff(msg tea.Msg) (tea.Model, tea.Cmd) {
 // updateTree routes a message to the tree pane; a changed selection opens
 // the new file in the diff pane unless the current one has unsaved changes.
 func (a *app) updateTree(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.KeyMsg); ok && a.dir.ask != nil { // a pending question takes every key
+		return a, a.dir.update(msg)
+	}
 	if k, ok := msg.(tea.KeyMsg); ok && !a.dir.filterInput {
 		switch keys.dir.action(k.String()) {
 		case "open":

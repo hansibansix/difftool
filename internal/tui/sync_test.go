@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,10 +17,10 @@ func TestDeleteOneSidedAndUndo(t *testing.T) {
 	// applying left → right means deleting it there, after confirmation
 	selectRel(t, d, filepath.Join("sub", "onlyr.txt"))
 	d.copyEntry(true)
-	if d.pendingDelete == "" {
+	if d.ask == nil || !strings.Contains(d.status, "delete") {
 		t.Fatalf("expected a delete prompt, status %q", d.status)
 	}
-	d.deletePending()
+	d.ask.answer("y", "") // the confirmation
 	if _, err := os.Stat(filepath.Join(r, "sub", "onlyr.txt")); err == nil {
 		t.Fatal("file must be deleted")
 	}
@@ -84,11 +85,14 @@ func TestSyncRefusedOnReadOnlyTarget(t *testing.T) {
 	}
 	d.roLeft = true
 	d.askSync(false)
-	if d.syncStep != 0 || d.status != "target side is read-only (git ref)" {
-		t.Fatalf("step %d status %q", d.syncStep, d.status)
+	if d.ask != nil || d.status != "target side is read-only (git ref)" {
+		t.Fatalf("prompt %v status %q", d.ask, d.status)
 	}
 	d.askSync(true)
-	if d.syncStep != 2 {
-		t.Fatalf("expected confirmation step, got %d (%q)", d.syncStep, d.status)
+	if d.ask == nil || !strings.Contains(d.status, "y/n") {
+		t.Fatalf("expected a confirmation prompt, got %q", d.status)
+	}
+	if d.ask.answer("n", "") {
+		t.Fatal("n must not be accepted")
 	}
 }

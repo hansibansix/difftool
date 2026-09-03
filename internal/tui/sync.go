@@ -54,16 +54,15 @@ func (d *dirModel) deleteOp(e *dirEntry, toRight bool) error {
 	return nil
 }
 
-// deletePending performs the deletion the user confirmed with y.
-func (d *dirModel) deletePending() {
-	dst := d.pendingDelete
-	d.pendingDelete = ""
+// deleteSelected removes the selected one-sided file on the given side,
+// after the user confirmed it.
+func (d *dirModel) deleteSelected(toRight bool) {
 	e := d.selected()
 	if e == nil {
 		return
 	}
 	d.batch++
-	if err := d.deleteOp(e, dst == filepath.Join(d.rightRoot, e.rel)); err != nil {
+	if err := d.deleteOp(e, toRight); err != nil {
 		d.status = "error: " + err.Error()
 		return
 	}
@@ -99,7 +98,6 @@ func (d *dirModel) syncPlan(toRight bool) (copies, deletes int) {
 
 // askSync validates the direction and asks for confirmation with a summary.
 func (d *dirModel) askSync(toRight bool) {
-	d.syncStep = 0
 	if (toRight && d.roRight) || (!toRight && d.roLeft) {
 		d.status = "target side is read-only (git ref)"
 		return
@@ -109,8 +107,8 @@ func (d *dirModel) askSync(toRight bool) {
 		d.status = "nothing to sync"
 		return
 	}
-	d.syncStep, d.syncToRight = 2, toRight
-	d.status = fmt.Sprintf("sync %s %d files (%d copy, %d delete)? y/n", arrowOf(toRight), copies+deletes, copies, deletes)
+	d.prompt(fmt.Sprintf("sync %s %d files (%d copy, %d delete)? y/n", arrowOf(toRight), copies+deletes, copies, deletes),
+		"sync cancelled", yesNo(func() { d.syncAll(toRight) }))
 }
 
 // syncAll makes the target side match the source side for every listed
