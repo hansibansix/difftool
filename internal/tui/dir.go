@@ -634,37 +634,31 @@ func (d *dirModel) view(focused bool, dirtyRel string) string {
 		if label == "" { // no label: the name carries the status color
 			nameSt = st
 		}
-		statW := 0
-		if stat != "" {
-			statW = runewidth.StringWidth(stat) + 2
-		}
-		nameW := max(4, d.w-4-1-runewidth.StringWidth(label)-3-statW)
-		unsaved := ""
-		if e.rel == dirtyRel {
-			unsaved = " *"
-			nameW -= 2
-		}
-		if n := sidecar.Count(e.rel); n > 0 {
-			unsaved += fmt.Sprintf(" ✎%d", n)
-			nameW -= 2 + len(fmt.Sprint(n))
-		}
 		icon := ""
 		if cfg.Icons {
 			ic := fileIcon(e.rel)
 			icon = pad.Foreground(lipgloss.Color(ic.color)).Render(" " + ic.glyph)
-			nameW -= 2
 		}
-		name := runewidth.Truncate(filepath.Base(e.rel), nameW, "…")
-		gap := strings.Repeat(" ", max(1, nameW-runewidth.StringWidth(name)+1))
-		statStr := ""
+		flags := "" // unsaved marker and open-notes badge, after the name
+		if e.rel == dirtyRel {
+			flags = " *"
+		}
+		if n := sidecar.Count(e.rel); n > 0 {
+			flags += fmt.Sprintf(" ✎%d", n)
+		}
+		tail := st.Render(label) + pad.Render(" ")
 		if stat != "" {
 			plus, minus, _ := strings.Cut(stat, " ")
-			statStr = styleStOnlyRight.Background(pad.GetBackground()).Render(plus) + pad.Render(" ") +
-				styleStOnlyLeft.Background(pad.GetBackground()).Render(minus) + pad.Render("  ")
+			tail = styleStOnlyRight.Background(pad.GetBackground()).Render(plus) + pad.Render(" ") +
+				styleStOnlyLeft.Background(pad.GetBackground()).Render(minus) + pad.Render("  ") + tail
 		}
+		// the name takes what the fixed parts leave: mark, indent, icon, a
+		// space, the flags, at least one gap cell and the tail
+		nameW := max(4, d.w-(1+2+lipgloss.Width(icon)+1+lipgloss.Width(flags)+1+lipgloss.Width(tail)))
+		name := runewidth.Truncate(filepath.Base(e.rel), nameW, "…")
+		gap := strings.Repeat(" ", max(1, nameW-runewidth.StringWidth(name)+1))
 		b.WriteString(mark + pad.Render("  ") + icon +
-			nameSt.Render(" "+name) + styleMark.Render(unsaved) + nameSt.Render(gap) +
-			statStr + st.Render(label) + pad.Render(" ") + "\n")
+			nameSt.Render(" "+name) + styleMark.Render(flags) + nameSt.Render(gap) + tail + "\n")
 	}
 
 	info := d.countsInfo()
