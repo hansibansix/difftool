@@ -471,20 +471,14 @@ func (m *model) applyChunk(c diff.Chunk, toRight bool) {
 		if len(m.right) == 0 {
 			m.rightNL = m.leftNL
 		}
-		orig := append([]string(nil), m.right[c.R0:c.R1]...)
-		m.right = diff.Splice(m.right, c.R0, c.R1, m.left[c.L0:c.L1])
-		m.shiftApplied(true, c.R1, (c.L1-c.L0)-(c.R1-c.R0), -1)
-		m.shiftNotes(true, c.R1, (c.L1-c.L0)-(c.R1-c.R0))
+		orig := m.replace(true, c.R0, c.R1, m.left[c.L0:c.L1], -1)
 		m.applied = append(m.applied, appliedRegion{c.L0, c.L1, c.R0, c.R0 + (c.L1 - c.L0), true, orig})
 		return
 	}
 	if len(m.left) == 0 {
 		m.leftNL = m.rightNL
 	}
-	orig := append([]string(nil), m.left[c.L0:c.L1]...)
-	m.left = diff.Splice(m.left, c.L0, c.L1, m.right[c.R0:c.R1])
-	m.shiftApplied(false, c.L1, (c.R1-c.R0)-(c.L1-c.L0), -1)
-	m.shiftNotes(false, c.L1, (c.R1-c.R0)-(c.L1-c.L0))
+	orig := m.replace(false, c.L0, c.L1, m.right[c.R0:c.R1], -1)
 	m.applied = append(m.applied, appliedRegion{c.L0, c.L0 + (c.R1 - c.R0), c.R0, c.R1, false, orig})
 }
 
@@ -506,13 +500,9 @@ func (m *model) resetApplied() {
 func (m *model) resetRegion(ai int) {
 	a := m.applied[ai]
 	if a.toRight {
-		m.right = diff.Splice(m.right, a.R0, a.R1, a.orig)
-		m.shiftApplied(true, a.R1, len(a.orig)-(a.R1-a.R0), ai)
-		m.shiftNotes(true, a.R1, len(a.orig)-(a.R1-a.R0))
+		m.replace(true, a.R0, a.R1, a.orig, ai)
 	} else {
-		m.left = diff.Splice(m.left, a.L0, a.L1, a.orig)
-		m.shiftApplied(false, a.L1, len(a.orig)-(a.L1-a.L0), ai)
-		m.shiftNotes(false, a.L1, len(a.orig)-(a.L1-a.L0))
+		m.replace(false, a.L0, a.L1, a.orig, ai)
 	}
 	m.applied = append(m.applied[:ai], m.applied[ai+1:]...)
 }
@@ -576,23 +566,33 @@ func (m *model) applySelection(toRight bool) {
 	m.recompute()
 }
 
-// shiftApplied moves applied regions starting at or after `from` on one
-// side by delta lines (skip excludes the region being edited).
-func (m *model) shiftApplied(right bool, from, delta, skip int) {
+// replace splices src over [from,to) of one side and moves everything that
+// sits below it, applied regions and note anchors, by the size change (skip
+// excludes the applied region being reset). It returns the replaced lines.
+func (m *model) replace(right bool, from, to int, src []string, skip int) []string {
+	lines := &m.left
+	if right {
+		lines = &m.right
+	}
+	orig := append([]string(nil), (*lines)[from:to]...)
+	*lines = diff.Splice(*lines, from, to, src)
+	delta := len(src) - (to - from)
 	for i := range m.applied {
 		a := &m.applied[i]
 		if i == skip {
 			continue
 		}
-		if right && a.R0 >= from {
+		if right && a.R0 >= to {
 			a.R0 += delta
 			a.R1 += delta
 		}
-		if !right && a.L0 >= from {
+		if !right && a.L0 >= to {
 			a.L0 += delta
 			a.L1 += delta
 		}
 	}
+	m.shiftNotes(right, to, delta)
+	return orig
 }
 
 func (m *model) pushUndo() {

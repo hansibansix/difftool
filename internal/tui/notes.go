@@ -122,8 +122,8 @@ func (m *model) insertNoteRows() {
 	}
 }
 
-// shiftNotes moves anchors at or after `from` on one side by delta lines,
-// mirroring shiftApplied, so notes follow an applied or reset hunk.
+// shiftNotes moves anchors below `from` on one side by delta lines, so
+// notes follow an applied or reset hunk (called by model.replace).
 func (m *model) shiftNotes(right bool, from, delta int) {
 	for _, n := range m.notes {
 		_, onRight := n.Line()
