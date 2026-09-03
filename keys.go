@@ -89,6 +89,7 @@ func defaultKeys() keymaps {
 			{"note", []string{"c"}},
 			{"note-delete", []string{"C"}},
 			{"note-resolve", []string{"r"}},
+			{"notes-toggle", []string{"A"}},
 			{"intraline", []string{"i"}},
 			{"wrap", []string{"w"}},
 			{"unified", []string{"o"}},

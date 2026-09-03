@@ -49,6 +49,7 @@ The exit code is 1 while conflicts remain, so enable `trustExitCode`:
 | `}` / `{`     | next / prev note (`-notes`)         |
 | `c` / `C`     | note on the cursor line, or on the selected lines in visual mode (on a note: edit yours, reply to the agent's) / delete the note under the cursor |
 | `r`           | resolve / reopen the note under the cursor |
+| `A`           | hide / show all note boxes          |
 | `J` / `K`     | next / prev file (dir mode)         |
 | `s`           | save modified file(s)               |
 | `e` / `E`     | edit the right / left file in `$VISUAL`/`$EDITOR` at the current hunk; the diff reloads on exit |
@@ -151,8 +152,15 @@ afterwards. On a note row `c` edits your own note or replies to an agent's
 (a new note on the same line), `C` deletes it, `r` resolves or reopens it
 (so you can tick agent notes off while reading; the agent drops resolved
 ones on its next pass). Select lines with `v` first and `c` writes a range
-note. Anchors follow applied and reset hunks within the session; they are
-not rewritten when you edit the files externally.
+note. `A` hides all boxes while the gutter tint and tree badges stay.
+Anchors follow applied and reset hunks within the session; they are not
+rewritten when you edit the files externally.
+
+The compared files are polled as well: when one changes on disk (an agent
+or editor wrote it) the view reloads, dropping applied markers and undo
+history like after `e`. Unsaved in-memory changes are never discarded; the
+status asks you to save or undo first. In directory mode only the open
+file is watched, the tree refreshes on the next selection.
 
 ## Ignore patterns
 

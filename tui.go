@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -106,6 +107,10 @@ type model struct {
 	noteAnchor [2]int // newLine, oldLine
 	noteEnd    int    // last line of a range note being written (0 = single line)
 	noteEdit   *note
+
+	// on-disk state the view shows; see watch.go
+	leftMod, rightMod time.Time
+	diskStale         bool
 }
 
 func newModel(leftPath, rightPath string) (*model, error) {
@@ -124,6 +129,7 @@ func newModel(leftPath, rightPath string) (*model, error) {
 		leftNL: leftNL, rightNL: rightNL,
 	}
 	m.savedL, m.savedR = left, right
+	m.stampDisk()
 	m.loadFileNotes()
 	m.recompute()
 	if len(m.nav) == 0 {
@@ -667,7 +673,7 @@ func (m *model) save() {
 			m.status = "error: " + err.Error()
 			return
 		}
-		m.savedL = m.left
+		m.savedL, m.leftMod = m.left, modTime(m.leftPath)
 		saved = append(saved, m.leftPath)
 	}
 	if m.rightDirty() {
@@ -675,7 +681,7 @@ func (m *model) save() {
 			m.status = "error: " + err.Error()
 			return
 		}
-		m.savedR = m.right
+		m.savedR, m.rightMod = m.right, modTime(m.rightPath)
 		saved = append(saved, m.rightPath)
 	}
 	if len(saved) == 0 {
@@ -863,6 +869,8 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 			m.deleteNote()
 		case "note-resolve":
 			m.toggleResolved()
+		case "notes-toggle":
+			m.toggleNotes()
 		case "search-prev":
 			if m.search != "" {
 				m.gotoMatch(-1)
@@ -1071,6 +1079,9 @@ func (m *model) view(focused bool) string {
 		info += fmt.Sprintf(" · %d notes", n)
 		if open < n {
 			info += fmt.Sprintf(", %d open", open)
+		}
+		if notesHidden {
+			info += " (hidden)"
 		}
 		for k, ri := range m.noteRows() {
 			if ri == m.curRow {

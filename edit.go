@@ -70,6 +70,7 @@ func (m *model) reload(editErr error) {
 		}
 	}
 	m.applied, m.undo = nil, nil
+	m.stampDisk()
 	m.recompute()
 	switch {
 	case editErr != nil:

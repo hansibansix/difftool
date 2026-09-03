@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 )
@@ -56,17 +55,9 @@ var notes struct {
 	mtime time.Time
 }
 
-// notesTickMsg drives the poll of the sidecar file.
-type notesTickMsg struct{}
-
-const notesPoll = time.Second
-
-func notesTick() tea.Cmd {
-	if notes.path == "" {
-		return nil
-	}
-	return tea.Tick(notesPoll, func(time.Time) tea.Msg { return notesTickMsg{} })
-}
+// notesHidden hides every note box for the session (the gutter tint and
+// the tree badges stay), for reading busy files plainly.
+var notesHidden bool
 
 // loadNotes reads the sidecar; a missing file is an empty set (it is
 // created by the first note typed in difftool).
@@ -185,7 +176,7 @@ func (m *model) hasNote(l, r int) bool {
 // go to the top, notes past the end of the file to the bottom. Nav targets
 // are re-pointed at their shifted rows.
 func (m *model) insertNoteRows() {
-	if len(m.notes) == 0 {
+	if len(m.notes) == 0 || notesHidden {
 		return
 	}
 	out := make([]row, 0, len(m.rows)+len(m.notes))
@@ -304,6 +295,9 @@ func (m *model) gotoNote(delta int) {
 	rows := m.noteRows()
 	if len(rows) == 0 {
 		m.status = "no notes in this file"
+		if notesHidden && len(m.notes) > 0 {
+			m.status = "notes are hidden (" + keys.file.first("notes-toggle") + " shows them)"
+		}
 		return
 	}
 	target := -1
@@ -343,6 +337,9 @@ func (m *model) startNote() {
 	if len(m.rows) == 0 {
 		return
 	}
+	if notesHidden { // the composer needs the note rows in place
+		m.toggleNotes()
+	}
 	r := m.rows[m.curRow]
 	m.noteEdit, m.noteText, m.noteRow, m.noteEnd = nil, "", m.curRow, 0
 	switch {
@@ -366,6 +363,27 @@ func (m *model) startNote() {
 		}
 	}
 	m.noteInput = true
+}
+
+// toggleNotes shows or hides the note boxes, keeping the cursor on the
+// same code line.
+func (m *model) toggleNotes() {
+	keep := row{l: -2, r: -2} // the code row at or after the cursor
+	for i := m.curRow; i < len(m.rows); i++ {
+		if m.rows[i].note == 0 {
+			keep = m.rows[i]
+			break
+		}
+	}
+	notesHidden = !notesHidden
+	m.recompute()
+	for i, r := range m.rows {
+		if r.note == 0 && r.l == keep.l && r.r == keep.r {
+			m.setCursor(i)
+			break
+		}
+	}
+	m.status = "notes " + map[bool]string{true: "hidden", false: "shown"}[notesHidden]
 }
 
 // startRangeNote opens the composer for the visually selected rows: the

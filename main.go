@@ -47,7 +47,7 @@ type app struct {
 	reText, reErr string
 }
 
-func (a *app) Init() tea.Cmd { return notesTick() }
+func (a *app) Init() tea.Cmd { return pollTick() }
 
 func (a *app) split() bool { return a.dir != nil && cfg.ShowTree && a.w >= minSplitWidth }
 
@@ -99,13 +99,16 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.dir.refreshSelected()
 		}
 		return a, nil
-	case notesTickMsg:
-		if reloadNotes() && a.file != nil {
+	case pollMsg:
+		if notes.path != "" && reloadNotes() && a.file != nil {
 			a.file.loadFileNotes()
 			a.file.recompute()
 			a.file.status = "notes reloaded"
 		}
-		return a, notesTick()
+		if a.file != nil && a.file.checkDisk() && a.dir != nil {
+			a.dir.refreshSelected()
+		}
+		return a, pollTick()
 	case closeFileMsg:
 		if a.dir == nil {
 			return a, tea.Quit

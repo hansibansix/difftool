@@ -313,3 +313,64 @@ func TestNoteBoxWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestReloadWhenFileChangesOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	l, r := filepath.Join(dir, "l.txt"), filepath.Join(dir, "r.txt")
+	os.WriteFile(l, []byte("a\nb\n"), 0o644)
+	os.WriteFile(r, []byte("a\nB\n"), 0o644)
+	m, err := newModel(l, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.checkDisk() {
+		t.Fatal("nothing changed yet")
+	}
+	// an agent rewrites the right file
+	os.WriteFile(r, []byte("a\nB\nnew\n"), 0o644)
+	os.Chtimes(r, time.Now(), m.rightMod.Add(2*time.Second))
+	if !m.checkDisk() || len(m.right) != 3 || !strings.Contains(m.status, "reloaded") {
+		t.Fatalf("reload: right=%v status=%q", m.right, m.status)
+	}
+	if m.checkDisk() {
+		t.Fatal("a reload must stamp the new mtime")
+	}
+	// unsaved changes block the reload and are reported once
+	m.apply(true)
+	os.WriteFile(r, []byte("a\nB\nnewer\n"), 0o644)
+	os.Chtimes(r, time.Now(), m.rightMod.Add(2*time.Second))
+	if m.checkDisk() || !m.dirty() || !strings.Contains(m.status, "changed on disk") {
+		t.Fatalf("dirty view must not reload: status=%q", m.status)
+	}
+	m.status = ""
+	if m.checkDisk() || m.status != "" {
+		t.Fatal("the warning must not repeat every tick")
+	}
+	m.undoLast()
+	if !m.checkDisk() || m.right[2] != "newer" {
+		t.Fatalf("after undo the reload goes through: %v", m.right)
+	}
+}
+
+func TestNotesToggle(t *testing.T) {
+	m := noteModel(t, []string{"a", "b", "c"}, []string{"a", "B", "c"},
+		note{FilePath: "f.txt", NewLine: 2, Summary: "on B"}, note{FilePath: "f.txt", NewLine: 3, Summary: "on c"})
+	defer func() { notesHidden = false }()
+	m.setCursor(2) // B, below the first note row
+	m.toggleNotes()
+	if !notesHidden || len(m.noteRows()) != 0 || m.rows[m.curRow].r != 1 {
+		t.Fatalf("hidden: rows=%d cursor=%+v", len(m.noteRows()), m.rows[m.curRow])
+	}
+	if m.noteAt(1, true) == nil {
+		t.Fatal("the gutter tint stays while hidden")
+	}
+	m.toggleNotes()
+	if notesHidden || len(m.noteRows()) != 2 || m.rows[m.curRow].r != 1 {
+		t.Fatalf("shown again: rows=%d cursor=%+v", len(m.noteRows()), m.rows[m.curRow])
+	}
+	m.toggleNotes()
+	m.startNote() // composing needs the rows, so it shows them
+	if notesHidden || !m.noteInput {
+		t.Fatal("c must un-hide the notes")
+	}
+}

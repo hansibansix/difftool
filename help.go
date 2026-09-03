@@ -39,6 +39,7 @@ func helpSections() []helpSection {
 			{acts("next-note", "prev-note"), "", "next / previous note (-notes file.json)"},
 			{acts("note", "note-delete"), "", "note on the cursor line (a range in visual mode); on a note: edit yours / reply to the agent's · delete the note (ctrl+s saves, esc cancels)"},
 			{acts("note-resolve"), "", "resolve / reopen the note under the cursor (resolved notes collapse to one line)"},
+			{acts("notes-toggle"), "", "hide / show all note boxes (line tint and tree badges stay)"},
 			{acts("intraline"), "", "toggle intraline highlight"},
 			{acts("wrap"), "", "toggle line wrap"},
 			{acts("unified"), "", "toggle unified (one-column) view"},
