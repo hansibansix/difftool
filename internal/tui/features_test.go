@@ -1,6 +1,7 @@
 package tui
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
 	"reflect"
 	"strings"
 	"testing"
@@ -94,11 +95,7 @@ func TestChromaStylesExist(t *testing.T) {
 }
 
 func TestHighlightLines(t *testing.T) {
-	origCfg, origTh := cfg, th
-	defer func() { cfg, th = origCfg, origTh }()
-	cfg.Syntax = true
-	th.chromaStyle = "rose-pine"
-	fgs := highlightLines("x.php", []string{"<?php", "function foo() {", "    return 42;", "}"})
+	fgs := highlightLines("x.php", []string{"<?php", "function foo() {", "    return 42;", "}"}, "rose-pine")
 	if fgs == nil || len(fgs) != 4 {
 		t.Fatalf("expected spans for 4 lines, got %v", fgs)
 	}
@@ -119,9 +116,8 @@ func TestHighlightLines(t *testing.T) {
 			}
 		}
 	}
-	cfg.Syntax = false
-	if highlightLines("x.php", []string{"<?php"}) != nil {
-		t.Fatal("Syntax=false must disable highlighting")
+	if highlightLines("x.php", []string{"<?php"}, "") != nil {
+		t.Fatal("an empty style must disable highlighting")
 	}
 }
 
@@ -225,5 +221,59 @@ func TestExpandTabsControlChars(t *testing.T) {
 	}
 	if expandTabs("plain") != "plain" {
 		t.Fatal("plain text must pass through")
+	}
+}
+
+// runCmds executes cmd (a single command or a batch) and returns the
+// messages it produces.
+func runCmds(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, runCmds(c)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
+}
+
+func TestHighlightAsync(t *testing.T) {
+	origCfg, origTh := cfg, th
+	defer func() { cfg, th = origCfg, origTh }()
+	cfg.Syntax, th.chromaStyle = true, "rose-pine"
+	m := testModel([]string{"<?php", "function foo() {}"}, []string{"<?php", "function bar() {}"})
+	m.leftPath, m.rightPath = "x.php", "y.php"
+	a := &app{file: m}
+	if m.leftFgs != nil {
+		t.Fatal("recompute must not highlight synchronously")
+	}
+	_, cmd := a.Update(tea.WindowSizeMsg{Width: 80, Height: 5})
+	msgs := runCmds(cmd)
+	if len(msgs) != 2 {
+		t.Fatalf("expected one highlight per side, got %d messages", len(msgs))
+	}
+	// the right side changes before its result lands: that result is stale
+	m.right = []string{"<?php", "function baz() {}"}
+	_, cmd = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	fresh := runCmds(cmd)
+	if len(fresh) != 1 {
+		t.Fatalf("only the changed side should be re-highlighted, got %d messages", len(fresh))
+	}
+	for _, msg := range msgs {
+		a.Update(msg)
+	}
+	if m.leftFgs == nil || m.rightFgs != nil {
+		t.Fatalf("left should be set and the stale right result dropped: %v %v", m.leftFgs, m.rightFgs)
+	}
+	a.Update(fresh[0])
+	if m.rightFgs == nil {
+		t.Fatal("fresh right result should be applied")
+	}
+	if _, cmd = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}); cmd != nil {
+		t.Fatal("nothing changed: no highlight should be requested")
 	}
 }

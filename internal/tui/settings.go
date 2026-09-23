@@ -386,6 +386,7 @@ func (a *app) applySettings() {
 	initStyles(themes[cfg.Theme])
 	if a.file != nil {
 		a.file.recompute()
+		a.file.hlFor = [2][]string{} // theme or syntax may have changed
 	}
 	if a.dir != nil {
 		a.dir.rebuildList()

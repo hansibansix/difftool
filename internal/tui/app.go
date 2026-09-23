@@ -85,8 +85,21 @@ func (a *app) unsavedStatus() string {
 	return "unsaved changes in " + filepath.Base(a.openedRel) + " — save or undo first"
 }
 
+// Update handles msg and then asks the open file for a highlight of
+// whatever changed, so no caller of recompute has to remember to.
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	_, cmd := a.update(msg)
+	if a.file != nil {
+		cmd = tea.Batch(cmd, a.file.highlightCmd())
+	}
+	return a, cmd
+}
+
+func (a *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case highlightMsg:
+		msg.m.setHighlight(msg)
+		return a, nil
 	case tea.WindowSizeMsg:
 		a.w, a.h = msg.Width, msg.Height
 		a.layout()

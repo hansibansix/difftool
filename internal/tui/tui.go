@@ -74,7 +74,9 @@ type model struct {
 	// slice header differs (lines are never mutated in place, only replaced)
 	savedL, savedR []string
 
-	leftFgs, rightFgs [][]fgSpan // syntax highlighting, per line
+	leftFgs, rightFgs [][]fgSpan  // syntax highlighting, per line
+	hlFor             [2][]string // lines each side's spans were requested for; see highlightCmd
+	hlGen             [2]int
 
 	search      string
 	searchInput bool
@@ -277,8 +279,6 @@ func (m *model) recompute() {
 	sort.Slice(m.nav, func(i, j int) bool { return m.nav[i].row < m.nav[j].row })
 	m.cur = clamp(m.cur, 0, max(0, len(m.nav)-1))
 	m.curRow = clamp(m.curRow, 0, max(0, len(m.rows)-1))
-	m.leftFgs = highlightLines(m.leftPath, expandAll(m.left))
-	m.rightFgs = highlightLines(m.rightPath, expandAll(m.right))
 	if m.search != "" {
 		m.computeMatches()
 	}
