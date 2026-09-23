@@ -54,6 +54,22 @@ func runGitMode(ref, cwd, pathspec string) error {
 	return err
 }
 
+// resolveSymlinks expands symlinks in path: --show-toplevel reports the real
+// path while cwd/pathspec may keep a symlinked prefix (macOS: /var ->
+// /private/var). A missing path (deleted file) resolves via its parent.
+func resolveSymlinks(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	dir, base := filepath.Split(filepath.Clean(path))
+	if dir != "" {
+		if resolved, err := filepath.EvalSymlinks(filepath.Clean(dir)); err == nil {
+			return filepath.Join(resolved, base)
+		}
+	}
+	return filepath.Clean(path)
+}
+
 // newGitDirModel compares the working tree of cwd's repository against ref,
 // or two refs against each other when ref is "A..B" (both sides read-only),
 // optionally limited to pathspec (a file or directory, relative or absolute).
@@ -77,7 +93,7 @@ func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(cwd, pathspec)
 		}
-		rel, err := filepath.Rel(root, abs)
+		rel, err := filepath.Rel(resolveSymlinks(root), resolveSymlinks(abs))
 		if err != nil || strings.HasPrefix(rel, "..") {
 			return nil, "", fmt.Errorf("path %s is outside the repository %s", pathspec, root)
 		}

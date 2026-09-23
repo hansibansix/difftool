@@ -72,3 +72,25 @@ func TestGitTwoRefs(t *testing.T) {
 		t.Fatalf("copies must be refused: %v %q", d.entries[0].status, d.status)
 	}
 }
+
+// The repo reached through a symlink, as macOS's temp dirs always are.
+func TestGitDirModelPathspecThroughSymlink(t *testing.T) {
+	repo, git := initRepo(t)
+	writeTestFile(t, filepath.Join(repo, "sub", "in.txt"), "a\n")
+	git("add", ".")
+	git("commit", "-q", "-m", "init")
+	writeTestFile(t, filepath.Join(repo, "sub", "in.txt"), "b\n")
+
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	d, tmp, err := newGitDirModel("HEAD", link, filepath.Join(link, "sub"))
+	if err != nil {
+		t.Fatalf("pathspec through a symlink must resolve: %v", err)
+	}
+	defer os.RemoveAll(tmp)
+	if len(d.entries) != 1 || d.entries[0].rel != filepath.Join("sub", "in.txt") {
+		t.Fatalf("pathspec scope wrong through symlink: %+v", d.entries)
+	}
+}
