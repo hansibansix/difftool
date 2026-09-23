@@ -217,12 +217,21 @@ startup.
 256-color fallback. Select in the settings menu, via `-theme <name>`, or
 `DIFFTOOL_THEME=<name>` (precedence: flag > env > config).
 
-## Build
+## Install
+
+```
+go install github.com/hansibansix/difftool/cmd/difftool@latest
+```
+
+puts the binary in `$(go env GOPATH)/bin`. From a clone:
 
 ```
 go build -o ~/.local/bin/difftool ./cmd/difftool
 cp scripts/difftool-review ~/.local/bin/       # optional: the herdr review wrapper
 ```
+
+Needs the Go version in `go.mod`; no cgo, so `GOOS`/`GOARCH` cross-compile
+as is. Make sure the target directory is on your `PATH`.
 
 Layout: `cmd/difftool` parses flags, `internal/tui` is the application,
 `internal/diff` the line and intraline diff, `internal/notes` the sidecar
