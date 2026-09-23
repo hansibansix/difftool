@@ -27,6 +27,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: difftool [-theme name] <left> <right>  (two files or two directories)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git [ref] [path]  (working tree vs. git ref)")
 		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git A..B [path]   (two git refs, read-only)")
+		fmt.Fprintln(os.Stderr, "       difftool [-theme name] -git C^!  [path]   (one commit vs. its parent)")
 		fmt.Fprintln(os.Stderr, "       difftool -merge LOCAL BASE REMOTE MERGED    (git mergetool)")
 		fmt.Fprintln(os.Stderr, "       -notes file.json in any mode shows agent notes beside the code")
 		fmt.Fprintf(os.Stderr, "themes: %s\n", tui.ThemeNames())

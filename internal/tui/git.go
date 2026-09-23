@@ -47,6 +47,9 @@ func newGitDirModel(ref, cwd, pathspec string) (*dirModel, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	if c, ok := strings.CutSuffix(ref, "^!"); ok { // git's "commit vs. its first parent"
+		ref = c + "^.." + c
+	}
 	refA, refB, twoRefs := strings.Cut(ref, "..")
 	if !twoRefs {
 		refA = ref

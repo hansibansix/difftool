@@ -7,6 +7,7 @@ PhpStorm's diff window. Compares two files or two directories.
 difftool [-theme name] <left> <right>       # two files or two directories
 difftool [-theme name] -git [ref] [path]    # working tree vs. git ref (default HEAD)
 difftool [-theme name] -git A..B [path]     # two refs, both read-only
+difftool [-theme name] -git C^! [path]      # one commit against its parent
 difftool -merge LOCAL BASE REMOTE MERGED    # 3-way merge (git mergetool)
 difftool -notes notes.json ...              # any mode: show agent notes beside the code
 difftool-review [difftool args]             # agents: open the review in a herdr tab, return when it closes
@@ -17,7 +18,7 @@ or copying a file left → right reverts it in the working tree. Untracked
 files are listed as "only right". An optional path (file or directory)
 limits the comparison; a single existing path is taken as the path, not a
 ref — use the two-arg form to disambiguate. `A..B` compares two refs
-without touching the working tree.
+without touching the working tree; `C^!` shows what commit C changed.
 
 ## Merge mode
 
