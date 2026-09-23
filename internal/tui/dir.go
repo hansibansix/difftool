@@ -172,6 +172,17 @@ func (d *dirModel) scan() error {
 	for rel := range seen {
 		rels = append(rels, rel)
 	}
+	if cfg.GitIgnore {
+		for _, root := range []string{d.leftRoot, d.rightRoot} {
+			for rel := range gitIgnored(root, rels) {
+				delete(seen, rel)
+			}
+		}
+		rels = rels[:0]
+		for rel := range seen {
+			rels = append(rels, rel)
+		}
+	}
 	d.setEntries(rels)
 	return nil
 }

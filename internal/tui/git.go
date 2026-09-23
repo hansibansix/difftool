@@ -13,6 +13,23 @@ func gitCmd(dir string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), err
 }
 
+// gitIgnored returns which of rels (relative to root) git's ignore rules
+// (.gitignore, .git/info/exclude, core.excludesFile) match. Empty when root
+// is not inside a repository: check-ignore needs one to know the rules.
+func gitIgnored(root string, rels []string) map[string]bool {
+	cmd := exec.Command("git", "-c", "core.quotepath=false", "check-ignore", "-z", "--stdin", "--no-index")
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader(strings.Join(rels, "\x00"))
+	out, _ := cmd.Output() // exit 1 = nothing ignored, 128 = no repo: both leave out empty
+	ign := map[string]bool{}
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel != "" {
+			ign[rel] = true
+		}
+	}
+	return ign
+}
+
 func gitRaw(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir

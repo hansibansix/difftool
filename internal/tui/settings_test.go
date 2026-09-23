@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -147,6 +149,38 @@ func TestScanHonorsIgnores(t *testing.T) {
 	}
 	if len(d.entries) != 1 || d.entries[0].rel != "a.php" {
 		t.Fatalf("ignored files must not be scanned: %+v", d.entries)
+	}
+}
+
+func TestScanHonorsGitignore(t *testing.T) {
+	orig := cfg
+	defer func() { cfg = orig }()
+	cfg.GitIgnore = true
+	l, r := t.TempDir(), t.TempDir()
+	if out, err := exec.Command("git", "-C", l, "init", "-q").CombinedOutput(); err != nil {
+		t.Skipf("git init: %v %s", err, out)
+	}
+	writeTestFile(t, filepath.Join(l, ".gitignore"), "*.log\n")
+	writeTestFile(t, filepath.Join(l, "a.php"), "x\n")
+	writeTestFile(t, filepath.Join(l, "b.log"), "x\n")
+	writeTestFile(t, filepath.Join(r, "c.log"), "x\n") // right-only, matched via left's rules
+	d, err := newDirModel(l, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rels []string
+	for _, e := range d.entries {
+		rels = append(rels, e.rel)
+	}
+	if strings.Join(rels, ",") != ".gitignore,a.php" {
+		t.Fatalf("gitignored files must not be scanned: %v", rels)
+	}
+	cfg.GitIgnore = false
+	if err := d.scan(); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.entries) != 4 {
+		t.Fatalf("with the option off all files are scanned: %+v", d.entries)
 	}
 }
 

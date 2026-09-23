@@ -105,7 +105,9 @@ click a pane to focus it, the wheel scrolls the pane under the pointer.
 `,` opens the settings menu in any view: theme, syntax + intraline highlight,
 line wrap, unified view, folding, ignore whitespace, ignore blank-line
 changes, ignore lines matching a regex, tab width, show identical files,
-file icons in the tree (Nerd Font; turn off without one), ignore patterns on/off.
+file icons in the tree (Nerd Font; turn off without one), ignore patterns on/off,
+honour `.gitignore` in directory mode (git mode always does; the directory must
+be inside a repository for its rules, including the global excludes file, to apply).
 Changes apply live and are saved to `~/.config/difftool/config.json` on close.
 
 Ignore rules: with *ignore blank-line changes* a hunk made only of blank

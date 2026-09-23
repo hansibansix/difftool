@@ -24,6 +24,7 @@ type config struct {
 	Wrap           bool     `json:"wrap"`
 	IgnorePatterns []string `json:"ignore_patterns"`
 	UseIgnores     bool     `json:"use_ignores"`
+	GitIgnore      bool     `json:"gitignore"` // dir mode: also honour git's ignore rules
 	Fold           bool     `json:"fold"`
 	Icons          bool     `json:"icons"` // Nerd Font file icons in the tree
 	Unified        bool     `json:"unified"`
@@ -62,7 +63,7 @@ var cfg = defaultConfig()
 func defaultConfig() config {
 	return config{
 		Theme: "rose-pine", Intraline: true, TabWidth: 4,
-		UseIgnores: true, Syntax: true, ShowTree: true, Icons: true,
+		UseIgnores: true, GitIgnore: true, Syntax: true, ShowTree: true, Icons: true,
 		IgnorePatterns: []string{
 			"node_modules", "vendor", // dependency trees
 			".svn", ".hg", // VCS metadata (.git is always skipped)
@@ -230,6 +231,10 @@ func (a *app) menuItems() []menuItem {
 		}, nil},
 		{"file icons (Nerd Font)", func() string { return onOff(cfg.Icons) }, func(int) {
 			cfg.Icons = !cfg.Icons
+		}, nil},
+		{"honour .gitignore (directory mode)", func() string { return onOff(cfg.GitIgnore) }, func(int) {
+			cfg.GitIgnore = !cfg.GitIgnore
+			a.rescanDir()
 		}, nil},
 		{"ignore patterns · enter edits", ignoreSummary, func(int) {
 			cfg.UseIgnores = !cfg.UseIgnores
