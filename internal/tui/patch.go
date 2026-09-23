@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"difftool/internal/diff"
 	"errors"
 	"fmt"
+	"github.com/hansibansix/difftool/internal/diff"
 	"os"
 	"os/exec"
 	"path/filepath"

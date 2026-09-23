@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"difftool/internal/notes"
 	"fmt"
+	"github.com/hansibansix/difftool/internal/notes"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"

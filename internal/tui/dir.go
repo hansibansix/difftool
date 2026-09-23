@@ -2,8 +2,8 @@ package tui
 
 import (
 	"bytes"
-	"difftool/internal/diff"
 	"fmt"
+	"github.com/hansibansix/difftool/internal/diff"
 	"io/fs"
 	"os"
 	"path/filepath"

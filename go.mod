@@ -1,4 +1,4 @@
-module difftool
+module github.com/hansibansix/difftool
 
 go 1.27.0
 

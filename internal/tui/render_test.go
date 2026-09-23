@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"difftool/internal/diff"
+	"github.com/hansibansix/difftool/internal/diff"
 
 	"github.com/charmbracelet/lipgloss"
 )

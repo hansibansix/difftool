@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"difftool/internal/notes"
 	"encoding/json"
 	"fmt"
+	"github.com/hansibansix/difftool/internal/notes"
 	"os"
 	"path/filepath"
 	"strings"

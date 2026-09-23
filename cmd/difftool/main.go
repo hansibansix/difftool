@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"difftool/internal/tui"
+	"github.com/hansibansix/difftool/internal/tui"
 )
 
 func main() {

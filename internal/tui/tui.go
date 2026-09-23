@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"difftool/internal/diff"
-	"difftool/internal/notes"
 	"fmt"
+	"github.com/hansibansix/difftool/internal/diff"
+	"github.com/hansibansix/difftool/internal/notes"
 	"os"
 	"path/filepath"
 	"sort"
